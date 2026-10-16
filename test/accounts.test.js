@@ -30,12 +30,15 @@ async function fakeFetch(url, opts = {}) {
   if (u.host === 'api.github.com') {
     const p = u.pathname;
     if (p === '/user') return opts.headers.Authorization === 'Bearer ghp_aaaaaaaaaaaaaaaaaaaaaaaa' ? json({ login: 'izzhazriq' }) : json({}, 401);
-    if (p.startsWith('/repos/izz/secret')) return opts.headers.Authorization ? json({}, 200) : json({ message: 'Not Found' }, 404);
+    if (p.startsWith('/repos/izz/secret')) {
+      if (!opts.headers.Authorization) return json({ message: 'Not Found' }, 404);
+      return json(p === '/repos/izz/secret' ? { full_name: 'izz/secret', html_url: 'https://github.com/izz/secret', private: true, default_branch: 'main' } : []);
+    }
     if (p === '/repos/izz/medina') return json({ full_name: 'izz/medina', html_url: 'https://github.com/izz/medina', description: 'Store', private: false,
       default_branch: 'main', stargazers_count: 2, language: 'JavaScript', pushed_at: now });
     if (p === '/repos/izz/medina/commits') return json([
-      { sha: 'abcdef1234567', html_url: 'https://github.com/izz/medina/commit/abcdef1', commit: { message: `Add cart page (TF-${ids.cartTask})\n\nDetails`, author: { name: 'Izz', date: now } }, author: { login: 'izz' } },
-      { sha: '1234567abcdef', html_url: 'https://github.com/izz/medina/commit/1234567', commit: { message: 'Fix typo TF-99999', author: { name: 'Izz', date: '2020-01-01T00:00:00Z' } }, author: null },
+      { sha: 'abcdef1234567', html_url: 'https://github.com/izz/medina/commit/abcdef1', commit: { message: `Add cart page (mbsw-${ids.cartNumber})\n\nDetails`, author: { name: 'Izz', date: now } }, author: { login: 'izz' } },
+      { sha: '1234567abcdef', html_url: 'https://github.com/izz/medina/commit/1234567', commit: { message: 'Fix typo MBSW-99999 and FYP-1', author: { name: 'Izz', date: '2020-01-01T00:00:00Z' } }, author: null },
     ]);
     if (p === '/repos/izz/medina/pulls') return json([{ number: 5, title: 'Checkout flow', html_url: 'https://github.com/izz/medina/pull/5', user: { login: 'izz' }, draft: true, created_at: now, head: { ref: 'checkout' } }]);
     if (p === '/repos/izz/medina/issues') return json([
@@ -142,7 +145,10 @@ test('the profile keeps Jira-style details and shows what you worked on', async 
   assert.equal('password_hash' in res.data.user, false);
   assert.equal((await lead('/auth/me', { method: 'PATCH', body: { cover: 'neon' } })).status, 400);
 
-  ids.cartTask = (await lead(`/boards/${personalProjectId}/tasks`, { method: 'POST', body: { title: 'Cart page' } })).data.task.id;
+  const cart = (await lead(`/boards/${personalProjectId}/tasks`, { method: 'POST', body: { title: 'Cart page' } })).data.task;
+  ids.cartTask = cart.id;
+  ids.cartNumber = cart.number;
+  assert.equal(cart.key, `MBSW-${cart.number}`);
   const { data } = await lead('/me/overview');
   assert.deepEqual(data.projects.map((p) => p.name).sort(), ['FYP', 'Medina Brand Store Website']);
   assert.equal(data.workedOn[0].title, 'Cart page');
@@ -163,8 +169,9 @@ test('a linked GitHub repository shows commits, pull requests and issues, linked
   assert.equal(data.repo.full_name, 'izz/medina');
   assert.equal(data.repo.open_issues, 1, 'pull requests aren’t counted as issues');
   assert.equal(data.commits_this_week, 1);
-  assert.deepEqual(data.commits[0].tasks.map((t) => t.id), [ids.cartTask], 'TF-<id> links the commit to the task');
-  assert.deepEqual(data.commits[1].tasks, [], 'tasks from other projects never show');
+  assert.deepEqual(data.commits[0].tasks.map((t) => t.id), [ids.cartTask], 'MBSW-<number> links the commit to the task');
+  assert.equal(data.commits[0].tasks[0].key, `MBSW-${ids.cartNumber}`);
+  assert.deepEqual(data.commits[1].tasks, [], 'unknown numbers and other projects’ keys never show');
   assert.equal(data.pulls[0].draft, true);
 
   const made = await lead(`/boards/${personalProjectId}/github/issues/7`, { method: 'POST' });
@@ -195,12 +202,13 @@ test('private repositories need a GitHub token, which is checked and never sent 
   assert.equal(JSON.stringify(me).includes('ghp_'), false);
   // The supervisor has no token, so the leader's is used for the project.
   calls.length = 0;
-  await sup(`/boards/${schoolId}/github`).catch(() => {});
+  assert.equal((await sup(`/boards/${schoolId}/github`)).data.repo.private, true);
   assert.ok(calls.some((c) => c.auth === 'Bearer ghp_aaaaaaaaaaaaaaaaaaaaaaaa'));
 
   assert.equal((await lead(`/boards/${schoolId}`, { method: 'PATCH', body: { github_repo: 'not a repo' } })).status, 400);
   assert.equal(parseRepo('github.com/izzhazriq/taskforge/'), 'izzhazriq/taskforge');
-  assert.deepEqual(taskKeys('Fix TF-3 and tf-12, again TF-3'), [3, 12]);
+  assert.deepEqual(taskKeys('Fix GTC-3 and gtc-12, again GTC-3 (UTF-8 too)'),
+    [{ key: 'GTC', number: 3 }, { key: 'GTC', number: 12 }, { key: 'UTF', number: 8 }]);
 });
 
 test('Sign in with Google: new people pick an account type first', async () => {
@@ -247,4 +255,30 @@ test('Sign in with Google links to an existing account with the same email', asy
   const s2 = new URL((await bad('/auth/google')).location).searchParams.get('state');
   assert.match((await bad(`/auth/google/callback?code=nope&state=${s2}`)).location, /auth_error=/);
   assert.equal((await client()('/auth/info')).data.google, true);
+});
+
+test('every task gets a key like MBSW-12, numbered per project, and keys can be searched and opened', async () => {
+  const fyp = (await lead(`/boards/${schoolId}`)).data.board;
+  assert.equal(fyp.key, 'FYP', 'one-word names use their first letters');
+  const a = (await lead(`/boards/${schoolId}/tasks`, { method: 'POST', body: { title: 'Chapter 1' } })).data.task;
+  const b = (await lead(`/boards/${schoolId}/tasks`, { method: 'POST', body: { title: 'Chapter 2' } })).data.task;
+  const sub = (await lead(`/tasks/${a.id}/subtasks`, { method: 'POST', body: { title: 'Intro' } })).data.task;
+  assert.deepEqual([a.key, b.key, sub.key], ['FYP-1', 'FYP-2', 'FYP-3'], 'numbers count up per project, subtasks included');
+
+  // Deleting a task never reuses its number.
+  await lead(`/tasks/${b.id}`, { method: 'DELETE' });
+  assert.equal((await lead(`/boards/${schoolId}/tasks`, { method: 'POST', body: { title: 'Chapter 3' } })).data.task.key, 'FYP-4');
+
+  assert.equal((await lead(`/tasks/by-key/fyp-1`)).data.task.id, a.id);
+  assert.equal((await lead(`/tasks/by-key/FYP-2`)).status, 404, 'deleted');
+  assert.equal((await mate(`/tasks/by-key/FYP-1`)).status, 404, 'not in that project');
+  assert.equal((await lead('/search?q=FYP-3')).data.tasks[0].title, 'Intro');
+
+  // Leaders can change the key; existing numbers stay.
+  assert.equal((await lead(`/boards/${schoolId}`, { method: 'PATCH', body: { key: 'gtc' } })).data.board.key, 'GTC');
+  assert.equal((await lead(`/tasks/${a.id}`)).data.task.key, 'GTC-1');
+  assert.equal((await lead(`/boards/${schoolId}`, { method: 'PATCH', body: { key: '1ABC' } })).status, 400);
+  assert.equal((await lead(`/boards/${schoolId}`, { method: 'PATCH', body: { key: 'TOOLONGKEY1' } })).status, 400);
+  const custom = await lead('/boards', { method: 'POST', body: { name: 'Gamuda Tech Console', kind: 'personal', key: 'GTC' } });
+  assert.equal(custom.data.board.key, 'GTC');
 });

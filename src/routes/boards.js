@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import path from 'node:path';
 import { HttpError, assertRole, avatarSql } from '../auth.js';
-import { transaction, logActivity } from '../db.js';
+import { transaction, logActivity, suggestKey } from '../db.js';
 import { TEMPLATES, dueForWeek } from '../templates.js';
 import { createTask, TODAY_SQL, localDateSql } from '../taskUtils.js';
 import { saveDocumentStream, removeFile, sendDownload, sendInline, previewType } from '../files.js';
@@ -17,7 +17,7 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
 
   r.get('/', (req, res) => {
     const boards = db.prepare(`
-      SELECT b.id, b.name, b.personal, b.kind, b.course_code, b.sem_start, m.role,
+      SELECT b.id, b.name, b.personal, b.kind, b.key, b.course_code, b.sem_start, m.role,
         p.created_at IS NOT NULL AS pinned,
         (SELECT COUNT(*) FROM tasks t WHERE t.board_id = b.id AND t.status != 'done') AS open_tasks,
         (SELECT COUNT(*) FROM tasks t WHERE t.board_id = b.id AND t.status = 'done') AS done_tasks,
@@ -45,8 +45,8 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
     if (s.kind === 'personal' && template !== 'blank') throw new HttpError(400, 'Templates are for school projects.');
     const board = transaction(db, () => {
       const { lastInsertRowid: id } = db.prepare(`
-        INSERT INTO boards (name, kind, course_code, sem_start, github_repo, description) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(s.name, s.kind, s.course_code, s.sem_start, s.github_repo, v.text(req.body.description, 'Description', { max: 4000, required: false }));
+        INSERT INTO boards (name, kind, key, course_code, sem_start, github_repo, description) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(s.name, s.kind, s.key, s.course_code, s.sem_start, s.github_repo, v.text(req.body.description, 'Description', { max: 4000, required: false }));
       db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, req.user.id);
       logActivity(db, id, req.user.id, 'board.created', `created the project "${s.name}"`);
       for (const t of TEMPLATES[template].tasks) {
@@ -108,7 +108,7 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
     if (b.description !== undefined) changes.description = v.text(b.description, 'Description', { max: 4000, required: false });
     if (b.goal !== undefined) changes.goal = v.text(b.goal, 'Goal', { max: 300, required: false });
     if (b.goal_date !== undefined) changes.goal_date = v.date(b.goal_date, 'Goal date');
-    const settings = ['name', 'kind', 'course_code', 'sem_start', 'github_repo'].filter((k) => b[k] !== undefined);
+    const settings = ['name', 'kind', 'key', 'course_code', 'sem_start', 'github_repo'].filter((k) => b[k] !== undefined);
     if (settings.length) {
       if (role !== 'owner') throw new HttpError(403, 'Only a group leader can change the project settings.');
       if (board.personal) {
@@ -224,21 +224,23 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
     try {
       const boardId = v.id(req.params.boardId, 'Project id');
       assertRole(db, boardId, req.user.id, 'supervisor');
-      const { github_repo: repo } = db.prepare('SELECT github_repo FROM boards WHERE id = ?').get(boardId);
+      const { github_repo: repo, key: boardKey } = db.prepare('SELECT github_repo, key FROM boards WHERE id = ?').get(boardId);
       if (!repo) return res.json({ linked: false });
       const data = await github.overview(repo, tokenFor(boardId, req.user.id));
-      // Link commits and pull requests that mention TF-<task number> to tasks in this project.
-      const keys = [...new Set([...data.commits, ...data.pulls].flatMap((c) => c.keys))];
-      const tasks = keys.length
-        ? db.prepare(`SELECT id, title, status FROM tasks WHERE board_id = ? AND id IN (${keys.map(() => '?').join(',')})`).all(boardId, ...keys)
+      // Link commits and pull requests that mention this project's keys, like MBSW-12, to those tasks.
+      const numbers = [...new Set([...data.commits, ...data.pulls].flatMap((c) => c.keys)
+        .filter((k) => k.key === boardKey).map((k) => k.number))];
+      const tasks = numbers.length
+        ? db.prepare(`SELECT id, number, title, status, ? || '-' || number AS key FROM tasks WHERE board_id = ? AND number IN (${numbers.map(() => '?').join(',')})`)
+          .all(boardKey, boardId, ...numbers)
         : [];
-      const imported = new Map(db.prepare('SELECT github_issue, id FROM tasks WHERE board_id = ? AND github_issue IS NOT NULL')
-        .all(boardId).map((t) => [t.github_issue, t.id]));
-      const link = (c) => ({ ...c, tasks: tasks.filter((t) => c.keys.includes(t.id)) });
+      const imported = new Map(db.prepare(`SELECT github_issue, id, ? || '-' || number AS key FROM tasks WHERE board_id = ? AND github_issue IS NOT NULL`)
+        .all(boardKey, boardId).map((t) => [t.github_issue, t]));
+      const link = ({ keys, ...c }) => ({ ...c, tasks: tasks.filter((t) => keys.some((k) => k.key === boardKey && k.number === t.number)) });
       res.json({
         linked: true, ...data,
         commits: data.commits.map(link), pulls: data.pulls.map(link),
-        issues: data.issues.map((i) => ({ ...i, task_id: imported.get(i.number) ?? null })),
+        issues: data.issues.map((i) => ({ ...i, task_id: imported.get(i.number)?.id ?? null, task_key: imported.get(i.number)?.key ?? null })),
       });
     } catch (err) { next(err); }
   });
@@ -277,7 +279,7 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
 
   function getBoard(boardId, userId) {
     return db.prepare(`
-      SELECT b.id, b.name, b.personal, b.kind, b.course_code, b.sem_start, b.description, b.goal, b.goal_date, b.github_repo,
+      SELECT b.id, b.name, b.personal, b.kind, b.key, b.course_code, b.sem_start, b.description, b.goal, b.goal_date, b.github_repo,
         EXISTS (SELECT 1 FROM pins p WHERE p.board_id = b.id AND p.user_id = ?) AS pinned
       FROM boards b WHERE b.id = ?`).get(userId, boardId);
   }
@@ -363,7 +365,17 @@ export function boardRoutes(db, { uploadDir: dir, github }) {
       course_code: school ? v.text(body.course_code, 'Course code', { max: 20, required: false }).replace(/\s+/g, '').toUpperCase() : '',
       sem_start: school ? v.date(body.sem_start, 'Week 1 start date') : null,
       github_repo: parseRepo(body.github_repo),
+      key: readKey(body.key, body.name),
     };
+  }
+
+  // Like Jira's project key: 2 to 10 capital letters or digits, starting with a letter.
+  function readKey(raw, name) {
+    if (raw === undefined || raw === null || raw === '') return suggestKey(name ?? '');
+    if (typeof raw !== 'string') throw new HttpError(400, 'Project key must be text.');
+    const key = raw.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9]{1,9}$/.test(key)) throw new HttpError(400, 'A project key is 2 to 10 letters or digits and starts with a letter, like MBSW.');
+    return key;
   }
 
   // The account type decides what someone can be: supervisor accounts only supervise,
@@ -441,7 +453,7 @@ export function documentRoutes(db, { uploadDir: dir }) {
 }
 
 export const TASK_LIST_COLUMNS = `
-  t.id, t.board_id, t.parent_id, t.title, t.status, t.important, t.position, t.assignee_id, t.due_date, t.completed_at,
+  t.id, t.board_id, t.parent_id, t.number, (SELECT k.key FROM boards k WHERE k.id = t.board_id) || '-' || t.number AS key, t.title, t.status, t.important, t.position, t.assignee_id, t.due_date, t.completed_at,
   (SELECT p.title FROM tasks p WHERE p.id = t.parent_id) AS parent_title,
   (SELECT COUNT(*) FROM comments c WHERE c.task_id = t.id) AS comment_count,
   (SELECT COUNT(*) FROM attachments a WHERE a.task_id = t.id) AS file_count,

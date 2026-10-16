@@ -34,7 +34,9 @@ Each project has four sections:
 - **Summary**: what the project is about and its goal (both editable), how many items are to do, doing and done, what's late, recent activity, and each person's workload.
 - **Tasks**: three columns (*To do*, *Doing*, *Done*). Drag cards between them.
 - **Documents**: PDFs, pictures, videos and any other files for the whole project, up to 500 MB each, plus every file attached to its tasks. Pictures, videos and PDFs open right in TaskForge. Filter by type, and watch big uploads with a progress bar.
-- **GitHub**: link the project to a repository to follow the system you're building. It shows commits this week, the last push, recent commits, open pull requests and open issues. Turn an issue into a task with one click. Write a task's key, like `TF-12`, in a commit message or pull request title and it links to that task. The key is on every task's panel. The Summary also gets a small Code card.
+- **GitHub**: link the project to a repository to follow the system you're building. It shows commits this week, the last push, recent commits, open pull requests and open issues. Turn an issue into a task with one click. Write a task's key, like `MBSW-12`, in a commit message or pull request title and it links to that task. The Summary also gets a small Code card.
+
+**Task keys, like Jira's.** Every project has a short key made from its name (Medina Brand Store Website → `MBSW`; you can change it in Settings), and every task and subtask gets the next number in that project: `MBSW-1`, `MBSW-2`, and so on. Numbers are never reused, even after a task is deleted. Keys show on cards, in My work, on subtasks and in the task panel (click it to copy). Write a key anywhere TaskForge shows text you wrote, such as a comment or a task's notes, and it becomes a link that opens that task. Search for a key, like `MBSW-12`, to jump straight to it. Your My to-dos list uses `TODO`.
 
 Leaders can clear a project's Recent activity from the Summary.
 
@@ -216,6 +218,7 @@ users ──< memberships >── boards ──< tasks ──< tasks (subtasks, 
 - A **subtask** is a task whose `parent_id` points at another task on the same board. Subtasks only go one level deep.
 - `memberships.role` is `owner` (leader), `member` or `supervisor`. A project always keeps at least one leader.
 - `users.account_type` is `student`, `personal` or `supervisor`. Supervisor accounts can only be supervisors, personal accounts can't be in school projects, and personal projects have no supervisors.
+- `boards.key` is the project's key and `boards.next_number` the number the next task gets. `tasks.number` is the task's number in its project, so its key is `key-number`.
 - `boards.github_repo` is the linked repository (`owner/name`). `tasks.github_issue` records which issue a task was made from.
 - Tasks on a personal list always belong to its owner. Project tasks can be given to any leader or member.
 - `tasks.completed_at` is set when a task is finished, which powers "Done recently" and the on-time count.
@@ -252,6 +255,7 @@ users ──< memberships >── boards ──< tasks ──< tasks (subtasks, 
 | GET | `/api/boards/:id/contributions` | anyone in it | Contributions report |
 | POST | `/api/boards/:id/tasks` | leader or member | Add a task |
 | GET | `/api/tasks/:id` | anyone in the project | Task with subtasks, files and comments |
+| GET | `/api/tasks/by-key/:key` | signed in | Find a task by its key, like `MBSW-12`, in your projects |
 | PATCH | `/api/tasks/:id` | leader or member; supervisors may change `status` only | Update a task |
 | DELETE | `/api/tasks/:id` | leader or member | Delete a task |
 | POST | `/api/tasks/:id/subtasks` | leader or member | Add a subtask (then use the task routes on it) |

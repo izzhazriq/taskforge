@@ -1,7 +1,7 @@
 // Creates demo accounts, a personal list and two team projects so the app has something to show.
 // Run with: npm run demo (it only ever touches the demo-data folder, never your real tasks).
 import fs from 'node:fs';
-import { openDb, transaction, createPersonalBoard } from './db.js';
+import { openDb, transaction, createPersonalBoard, suggestKey } from './db.js';
 import { DEMO, DATA_DIR } from './config.js';
 import { hashPassword } from './auth.js';
 import { TEMPLATES, dueForWeek } from './templates.js';
@@ -83,7 +83,7 @@ transaction(db, () => {
   const grp = project('Group Assignment', 'CSC584', [['demo', 'owner'], ['aina', 'member'], ['farid', 'member'], ['mei', 'member']], 'group',
     [['done', 'demo'], ['done', 'aina'], ['doing', 'farid'], ['todo', 'mei'], ['doing', 'aina'], ['todo', 'demo'], ['todo', null]]);
   comment.run(grp[2], id.farid, 'Uploading my draft tonight. Can someone check the references?');
-  comment.run(grp[2], id.aina, 'Sure, I will check once it is up.');
+  comment.run(grp[2], id.aina, 'Sure, I will check once it is up. The references from GA-2 are in our Drive folder.');
   const grp0 = lastBoard;
   for (const [title, who, status] of [['Introduction', 'demo', 'done'], ['Literature review', 'aina', 'doing'], ['ERD and normalisation', 'farid', 'doing'], ['SQL queries', 'mei', 'todo']]) {
     createTask(db, grp0, id.demo, { title, status, assigneeId: id[who], parentId: grp[2] });
@@ -102,6 +102,8 @@ transaction(db, () => {
   createTask(db, site, id.demo, { title: 'Buy the domain', assigneeId: id.demo, status: 'done' });
 });
 
+// Projects made straight in SQL above get their key from their name, like the app does.
+for (const b of db.prepare(`SELECT id, name FROM boards WHERE key = ''`).all()) db.prepare('UPDATE boards SET key = ? WHERE id = ?').run(suggestKey(b.name), b.id);
 db.close();
 console.log(`Seeded demo data (Week 1 started ${semStart}, so this is Week 7).`);
 console.log('Log in as demo@taskforge.dev, aina@taskforge.dev or dr.nurul@taskforge.dev (supervisor). Password: demo1234');

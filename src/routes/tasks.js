@@ -34,14 +34,17 @@ export function taskRoutes(db, { uploadDir: dir }) {
     const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
     if (!q) return res.json({ tasks: [] });
     const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    // A key like MBSW-12 finds that task first.
+    const keyMatch = q.match(/^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})$/);
+    const keyArgs = keyMatch ? [keyMatch[1].toUpperCase(), Number(keyMatch[2])] : [null, null];
     const tasks = db.prepare(`
       SELECT ${TASK_LIST_COLUMNS}, b.name AS board_name, b.personal, b.course_code, b.kind
       FROM tasks t
       JOIN boards b ON b.id = t.board_id
       JOIN memberships m ON m.board_id = t.board_id AND m.user_id = ?
-      WHERE (t.title LIKE ? ESCAPE '\\' OR t.notes LIKE ? ESCAPE '\\')
-      ORDER BY t.status = 'done', t.due_date IS NULL, t.due_date, t.updated_at DESC
-      LIMIT 50`).all(req.user.id, like, like);
+      WHERE (t.title LIKE ? ESCAPE '\\' OR t.notes LIKE ? ESCAPE '\\' OR (b.key = ? AND t.number = ?))
+      ORDER BY (b.key = ? AND t.number = ?) DESC, t.status = 'done', t.due_date IS NULL, t.due_date, t.updated_at DESC
+      LIMIT 50`).all(req.user.id, like, like, ...keyArgs, ...keyArgs);
     res.json({ tasks });
   });
 
@@ -63,6 +66,18 @@ export function taskRoutes(db, { uploadDir: dir }) {
     const fields = { ...readNewTask(parent.board_id, req.body), parentId: parent.id };
     const id = transaction(db, () => createTask(db, parent.board_id, req.user.id, fields));
     res.status(201).json({ task: getTask(id) });
+  });
+
+  // Opens a task from its key, like MBSW-12, among the projects you're in.
+  r.get('/tasks/by-key/:key', (req, res) => {
+    const m = String(req.params.key).match(/^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})$/);
+    if (!m) throw new HttpError(400, 'A task key looks like MBSW-12.');
+    const task = db.prepare(`
+      SELECT t.id FROM tasks t JOIN boards b ON b.id = t.board_id
+      JOIN memberships mm ON mm.board_id = b.id AND mm.user_id = ?
+      WHERE b.key = ? AND t.number = ? ORDER BY b.personal, b.id LIMIT 1`).get(req.user.id, m[1].toUpperCase(), Number(m[2]));
+    if (!task) throw new HttpError(404, `${m[1].toUpperCase()}-${m[2]} isn’t a task in any of your projects.`);
+    res.json({ task });
   });
 
   r.get('/tasks/:taskId', (req, res) => {

@@ -18,10 +18,12 @@ export function createTask(db, boardId, userId, t) {
   const { maxPos } = parentId
     ? db.prepare('SELECT MAX(position) AS maxPos FROM tasks WHERE parent_id = ?').get(parentId)
     : db.prepare('SELECT MAX(position) AS maxPos FROM tasks WHERE board_id = ? AND status = ? AND parent_id IS NULL').get(boardId, status);
+  // Each task takes the project's next number, so its key (MBSW-12) never changes or repeats.
+  const { number } = db.prepare('UPDATE boards SET next_number = next_number + 1 WHERE id = ? RETURNING next_number - 1 AS number').get(boardId);
   const { lastInsertRowid: id } = db.prepare(`
-    INSERT INTO tasks (board_id, parent_id, title, notes, status, important, position, assignee_id, due_date, completed_at, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') END, ?)`).run(
-    boardId, parentId, t.title, t.notes ?? '', status, t.important ? 1 : 0, (maxPos ?? 0) + POSITION_GAP,
+    INSERT INTO tasks (board_id, parent_id, number, title, notes, status, important, position, assignee_id, due_date, completed_at, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'done' THEN datetime('now') END, ?)`).run(
+    boardId, parentId, number, t.title, t.notes ?? '', status, t.important ? 1 : 0, (maxPos ?? 0) + POSITION_GAP,
     board.personal ? userId : (t.assigneeId ?? null), t.dueDate ?? null, status, userId);
   logActivity(db, boardId, userId, 'task.created', parentId ? `added the subtask "${t.title}"` : `added "${t.title}"`);
   return id;
