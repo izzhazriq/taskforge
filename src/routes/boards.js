@@ -1,10 +1,10 @@
-import { Router, raw } from 'express';
+import { Router } from 'express';
 import path from 'node:path';
 import { HttpError, assertRole, avatarSql } from '../auth.js';
 import { transaction, logActivity } from '../db.js';
 import { TEMPLATES, dueForWeek } from '../templates.js';
 import { createTask, TODAY_SQL, localDateSql } from '../taskUtils.js';
-import { MAX_UPLOAD_BYTES, saveUpload, removeFile, sendDownload } from '../files.js';
+import { saveDocumentStream, removeFile, sendDownload, sendInline, previewType } from '../files.js';
 import * as v from '../validate.js';
 
 export const KINDS = ['school', 'personal'];
@@ -150,25 +150,42 @@ export function boardRoutes(db, { uploadDir: dir }) {
   r.get('/:boardId/documents', (req, res) => {
     const boardId = v.id(req.params.boardId, 'Project id');
     assertRole(db, boardId, req.user.id, 'supervisor');
+    // `preview` says whether the browser can show it: image, video, pdf, or null for download only.
+    const withPreview = (f) => {
+      const { stored_name: storedName, mime, ...rest } = f;
+      return { ...rest, preview: previewType({ stored_name: storedName, mime }, uploadDir)?.kind ?? null };
+    };
     const documents = db.prepare(`
-      SELECT d.id, d.filename, d.size, d.created_at, d.user_id, u.name AS user_name
-      FROM documents d LEFT JOIN users u ON u.id = d.user_id WHERE d.board_id = ? ORDER BY d.id DESC`).all(boardId);
+      SELECT d.id, d.filename, d.mime, d.size, d.created_at, d.user_id, d.stored_name, u.name AS user_name
+      FROM documents d LEFT JOIN users u ON u.id = d.user_id WHERE d.board_id = ? ORDER BY d.id DESC`).all(boardId).map(withPreview);
     const taskFiles = db.prepare(`
-      SELECT a.id, a.filename, a.size, a.created_at, a.user_id, u.name AS user_name, t.id AS task_id, t.title AS task_title
+      SELECT a.id, a.filename, a.mime, a.size, a.created_at, a.user_id, a.stored_name, u.name AS user_name,
+        t.id AS task_id, t.title AS task_title
       FROM attachments a JOIN tasks t ON t.id = a.task_id LEFT JOIN users u ON u.id = a.user_id
-      WHERE t.board_id = ? ORDER BY a.id DESC`).all(boardId);
+      WHERE t.board_id = ? ORDER BY a.id DESC`).all(boardId).map(withPreview);
     res.json({ documents, taskFiles });
   });
 
-  r.post('/:boardId/documents', raw({ type: () => true, limit: MAX_UPLOAD_BYTES }), (req, res) => {
-    const boardId = v.id(req.params.boardId, 'Project id');
-    assertRole(db, boardId, req.user.id, 'member');
-    const f = saveUpload(req, uploadDir);
+  // The file streams straight to disk, so videos of a few hundred MB are fine.
+  r.post('/:boardId/documents', async (req, res, next) => {
+    let f;
+    try {
+      const boardId = v.id(req.params.boardId, 'Project id');
+      assertRole(db, boardId, req.user.id, 'member');
+      f = await saveDocumentStream(req, uploadDir);
+    } catch (err) {
+      req.resume(); // drain the rest of the upload so the error reaches the browser
+      return next(err);
+    }
+    const boardId = Number(req.params.boardId);
     const { lastInsertRowid: id } = db.prepare(`
       INSERT INTO documents (board_id, user_id, filename, mime, size, stored_name) VALUES (?, ?, ?, ?, ?, ?)`)
       .run(boardId, req.user.id, f.filename, f.mime, f.size, f.stored);
     logActivity(db, boardId, req.user.id, 'document.added', `added the document "${f.filename}"`);
-    res.status(201).json({ document: { id, filename: f.filename, size: f.size, user_id: req.user.id, user_name: req.user.name } });
+    res.status(201).json({ document: {
+      id, filename: f.filename, size: f.size, user_id: req.user.id, user_name: req.user.name,
+      preview: previewType({ stored_name: f.stored, mime: f.mime }, uploadDir)?.kind ?? null,
+    } });
   });
 
   // Members list, with each person's photo. Used by the board and the Team panel.
@@ -300,7 +317,9 @@ export function documentRoutes(db, { uploadDir: dir }) {
   r.get('/:docId', (req, res) => {
     const d = load(req.params.docId);
     assertRole(db, d.board_id, req.user.id, 'supervisor');
-    sendDownload(res, uploadDir, d);
+    // ?view=1 shows pictures, videos and PDFs in the browser; anything else always downloads.
+    const type = req.query.view ? previewType(d, uploadDir) : null;
+    if (type) sendInline(res, uploadDir, d, type); else sendDownload(res, uploadDir, d);
   });
   r.delete('/:docId', (req, res) => {
     const d = load(req.params.docId);

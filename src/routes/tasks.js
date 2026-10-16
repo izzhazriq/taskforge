@@ -4,7 +4,7 @@ import path from 'node:path';
 import { HttpError, assertRole, avatarSql } from '../auth.js';
 import { transaction, logActivity } from '../db.js';
 import { createTask, STATUS_LABEL, POSITION_GAP } from '../taskUtils.js';
-import { MAX_UPLOAD_BYTES, saveUpload, removeFile, sendDownload } from '../files.js';
+import { MAX_UPLOAD_BYTES, saveUpload, removeFile, sendDownload, sendInline, previewType } from '../files.js';
 import { TASK_LIST_COLUMNS } from './boards.js';
 import * as v from '../validate.js';
 
@@ -164,7 +164,8 @@ export function taskRoutes(db, { uploadDir: dir }) {
   r.get('/attachments/:attachmentId', (req, res) => {
     const a = loadAttachment(req.params.attachmentId);
     assertRole(db, a.board_id, req.user.id, 'supervisor');
-    sendDownload(res, uploadDir, a);
+    const type = req.query.view ? previewType(a, uploadDir) : null;
+    if (type) sendInline(res, uploadDir, a, type); else sendDownload(res, uploadDir, a);
   });
 
   r.delete('/attachments/:attachmentId', (req, res) => {

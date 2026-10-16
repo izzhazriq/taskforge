@@ -591,42 +591,123 @@ function renderSummary({ status, activity, workload, unassigned }) {
 }
 
 // ---------- Documents ----------
+const MAX_DOCUMENT = 500 * 1024 * 1024;
+const DOC_ICON = { pdf: 'PDF', image: 'IMG', video: '▶', other: 'FILE' };
+let docFilter = 'all';
+let docData = { documents: [], taskFiles: [] };
+const kindOf = (f) => f.preview || 'other';
+
 async function loadDocuments() {
   const id = state.board.id;
-  const { documents, taskFiles } = await api(`/boards/${id}/documents`);
+  const data = await api(`/boards/${id}/documents`);
   if (state.view.kind !== 'board' || state.view.id !== id) return;
+  docData = data;
+  renderDocuments();
+}
+
+function renderDocuments() {
+  const { documents, taskFiles } = docData;
   const edit = canWork(state.board.role);
   $('doc-upload').hidden = !edit;
-  const fileRow = (f, { href, onDelete, task }) => h('li', {},
-    h('span', { class: 'ext' }, f.filename.split('.').pop()),
-    h('span', { class: 'grow' },
-      h('a', { href, download: f.filename }, f.filename),
-      h('small', {}, [fmtSize(f.size), f.user_name || 'someone', fmtTime(f.created_at)].join(' · '))),
-    task && h('button', { class: 'link', onclick: () => openTask(f.task_id) }, `In “${f.task_title}”`),
-    onDelete && h('button', { class: 'link', onclick: onDelete }, 'Delete'));
+  for (const b of document.querySelectorAll('.doc-filters button')) b.setAttribute('aria-pressed', b.dataset.filter === docFilter);
+  const shown = (list) => list.filter((f) => docFilter === 'all' || kindOf(f) === docFilter);
   const canDelete = (f) => edit && (f.user_id === state.me.id || state.board.role === 'owner');
-  $('doc-list').replaceChildren(...(documents.length ? documents.map((d) => fileRow(d, {
-    href: `/api/documents/${d.id}`,
-    onDelete: canDelete(d) && (async () => { await api(`/documents/${d.id}`, { method: 'DELETE' }); loadDocuments(); }),
-  })) : [h('li', { class: 'empty-row' }, edit ? 'No documents yet. Add the assignment brief, rubric or anything the whole project needs.' : 'No documents yet.')]));
-  $('task-file-list').replaceChildren(...(taskFiles.length ? taskFiles.map((f) => fileRow(f, { href: `/api/attachments/${f.id}`, task: true }))
-    : [h('li', { class: 'empty-row' }, 'Files attached to tasks show up here too.')]));
+
+  const tile = (f, { base, task }) => {
+    const kind = kindOf(f);
+    const href = `${base}/${f.id}`;
+    const thumb = kind === 'image'
+      ? h('img', { src: `${href}?view=1`, alt: '', loading: 'lazy' })
+      : kind === 'video'
+        ? h('video', { src: `${href}?view=1#t=0.5`, preload: 'metadata', muted: true, playsinline: true })
+        : h('span', { class: 'doc-icon' }, kind === 'other' ? (f.filename.split('.').pop() || 'file').slice(0, 5) : DOC_ICON[kind]);
+    return h('li', { class: `doc-tile ${kind}` },
+      h('button', { class: 'doc-thumb', onclick: () => openViewer(f, base), 'aria-label': `Open ${f.filename}` },
+        thumb, kind === 'video' && h('span', { class: 'play', 'aria-hidden': 'true' }, '▶')),
+      h('div', { class: 'doc-info' },
+        h('a', { class: 'doc-name', href, download: f.filename, title: f.filename }, f.filename),
+        h('small', {}, [fmtSize(f.size), f.user_name || 'someone', fmtTime(f.created_at)].join(' · ')),
+        task && h('button', { class: 'link', onclick: () => openTask(f.task_id) }, `In “${f.task_title}”`),
+        canDelete(f) && !task && h('button', { class: 'link danger', onclick: async () => {
+          await api(`/documents/${f.id}`, { method: 'DELETE' });
+          loadDocuments();
+        } }, 'Delete')));
+  };
+  const docs = shown(documents);
+  const files = shown(taskFiles);
+  const empty = (text) => [h('li', { class: 'empty-row' }, text)];
+  $('doc-count').textContent = documents.length ? String(docs.length) : '';
+  $('task-file-count').textContent = taskFiles.length ? String(files.length) : '';
+  $('doc-list').replaceChildren(...(docs.length ? docs.map((d) => tile(d, { base: '/api/documents' }))
+    : empty(documents.length ? 'Nothing of this kind yet.' : edit ? 'No documents yet. Add the brief, the rubric, photos, recordings, anything the project needs.' : 'No documents yet.')));
+  $('task-file-list').replaceChildren(...(files.length ? files.map((f) => tile(f, { base: '/api/attachments', task: true }))
+    : empty(taskFiles.length ? 'Nothing of this kind yet.' : 'Files attached to tasks show up here too.')));
+}
+for (const b of document.querySelectorAll('.doc-filters button')) b.onclick = () => { docFilter = b.dataset.filter; renderDocuments(); };
+
+// Pictures, videos and PDFs open in a viewer; anything else downloads.
+function openViewer(f, base) {
+  const href = `${base}/${f.id}`;
+  const kind = kindOf(f);
+  if (kind === 'other') { location.href = href; return; }
+  const view = `${href}?view=1`;
+  $('viewer-name').textContent = f.filename;
+  $('viewer-download').href = href;
+  $('viewer-download').setAttribute('download', f.filename);
+  $('viewer-open').href = view;
+  $('viewer-body').replaceChildren(
+    kind === 'image' ? h('img', { src: view, alt: f.filename })
+      : kind === 'video' ? h('video', { src: view, controls: true, autoplay: true, playsinline: true,
+          onerror: (e) => e.target.replaceWith(h('p', { class: 'viewer-note' },
+            'This browser can’t play this video. Download it to watch it, or try Chrome or Edge.')) })
+        : h('iframe', { src: view, title: f.filename }));
+  $('viewer').showModal();
+}
+$('viewer-close').onclick = () => $('viewer').close();
+$('viewer').addEventListener('close', () => $('viewer-body').replaceChildren()); // stops a playing video
+$('viewer').addEventListener('click', (e) => { if (e.target === $('viewer')) $('viewer').close(); });
+
+// Uploads one file at a time with a progress bar, since videos can take a while.
+function sendWithProgress(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api${url}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data.error || 'The upload failed.'));
+    };
+    xhr.onerror = () => reject(new Error('The upload failed. Is TaskForge still running?'));
+    xhr.send(file);
+  });
 }
 
 async function uploadDocuments(files) {
   $('doc-error').textContent = '';
+  const boardId = state.board.id;
+  const errors = [];
   for (const file of files) {
-    if (file.size > MAX_UPLOAD) { $('doc-error').textContent = `${file.name} is bigger than 10 MB.`; continue; }
+    if (file.size > MAX_DOCUMENT) { errors.push(`${file.name} is bigger than 500 MB.`); continue; }
+    const bar = h('i');
+    const pct = h('span', { class: 'pct' }, '0%');
+    const row = h('li', {}, h('span', { class: 'name' }, file.name), h('span', { class: 'progress' }, bar), pct);
+    $('doc-progress').append(row);
     try {
-      await api(`/boards/${state.board.id}/documents`, {
-        method: 'POST', raw: file,
-        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      await sendWithProgress(`/boards/${boardId}/documents`, file, (p) => {
+        bar.style.width = `${Math.round(p * 100)}%`;
+        pct.textContent = `${Math.round(p * 100)}%`;
       });
     } catch (err) {
-      $('doc-error').textContent = `${file.name}: ${err.message}`;
+      errors.push(`${file.name}: ${err.message}`);
     }
+    row.remove();
   }
-  loadDocuments();
+  $('doc-error').textContent = errors.join(' ');
+  if (state.view.kind === 'board' && state.view.id === boardId) loadDocuments();
 }
 $('doc-file-input').onchange = (e) => { uploadDocuments([...e.target.files]); e.target.value = ''; };
 const docDrop = $('doc-upload');

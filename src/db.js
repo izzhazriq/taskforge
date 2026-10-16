@@ -196,7 +196,7 @@ export function logActivity(db, boardId, userId, action, detail) {
 
 // Every account gets one personal board for its own tasks.
 export function createPersonalBoard(db, userId) {
-  const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal) VALUES ('Personal', 1)`).run();
+  const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal, kind) VALUES ('Personal', 1, 'personal')`).run();
   db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, userId);
   return id;
 }
