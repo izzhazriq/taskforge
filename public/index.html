@@ -40,12 +40,14 @@
       <nav class="nav">
         <button id="nav-mywork" class="nav-item"><span>My work</span><span class="badge" id="mywork-badge" hidden></span></button>
         <button id="nav-personal" class="nav-item"><span>Personal</span></button>
+        <div class="label" id="pinned-label" hidden>Pinned</div>
+        <div id="pinned-list" class="nav"></div>
         <div class="label">Projects</div>
         <div id="project-list" class="nav"></div>
         <button class="nav-item add" id="new-project">+ New project</button>
       </nav>
       <div class="me">
-        <button class="link me-link" id="me-name" title="Account settings"></button>
+        <button class="me-link" id="nav-profile" title="Your profile"><span id="me-avatar"></span><span id="me-name"></span></button>
         <button class="link" id="logout">Log out</button>
       </div>
     </aside>
@@ -84,16 +86,87 @@
         <header class="page-head">
           <div>
             <div class="sub" id="board-sub"></div>
-            <h2 id="board-name"></h2>
+            <div class="title-line">
+              <h2 id="board-name"></h2>
+              <button class="pin" id="pin-toggle" aria-pressed="false">Pin</button>
+            </div>
           </div>
           <div class="head-actions">
-            <label class="check" id="mine-toggle"><input id="filter-mine" type="checkbox"> Only my tasks</label>
             <button class="btn" id="show-team">Team</button>
             <button class="btn" id="show-contrib">Contributions</button>
             <button class="btn" id="show-settings">Settings</button>
           </div>
         </header>
-        <div class="columns" id="columns"></div>
+        <nav class="tabs" role="tablist" aria-label="Project sections">
+          <button role="tab" data-tab="summary" id="tab-summary">Summary</button>
+          <button role="tab" data-tab="tasks" id="tab-tasks">Tasks</button>
+          <button role="tab" data-tab="documents" id="tab-documents">Documents</button>
+        </nav>
+
+        <div id="panel-summary" role="tabpanel" aria-labelledby="tab-summary" class="summary-grid"></div>
+
+        <div id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" class="stack-tight">
+          <label class="check" id="mine-toggle"><input id="filter-mine" type="checkbox"> Only my tasks</label>
+          <div class="columns" id="columns"></div>
+        </div>
+
+        <div id="panel-documents" role="tabpanel" aria-labelledby="tab-documents" class="stack-tight">
+          <label class="upload" id="doc-upload">
+            <input type="file" id="doc-file-input" multiple>
+            <span>Add documents</span>
+            <small>Rubrics, briefs, reports, slides. PDF, Word, slides, Excel, images or ZIP, up to 10 MB each</small>
+          </label>
+          <p class="error" id="doc-error" role="alert"></p>
+          <section class="doc-section">
+            <h3>Project documents</h3>
+            <ul class="files" id="doc-list"></ul>
+          </section>
+          <section class="doc-section">
+            <h3>Attached to tasks</h3>
+            <ul class="files" id="task-file-list"></ul>
+          </section>
+        </div>
+      </section>
+
+      <!-- Profile -->
+      <section id="profile-view" hidden>
+        <header class="page-head"><div><div class="sub">Your account</div><h2>Profile</h2></div></header>
+        <div class="profile">
+          <div class="box profile-card">
+            <div id="profile-avatar" class="avatar-xl"></div>
+            <div class="profile-who">
+              <h3 id="profile-name"></h3>
+              <p class="muted" id="profile-email"></p>
+              <p id="profile-bio"></p>
+            </div>
+            <div class="photo-actions">
+              <label class="btn">Change photo<input type="file" id="photo-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden></label>
+              <button class="link" id="photo-remove">Remove photo</button>
+            </div>
+            <p class="error" id="photo-error" role="alert"></p>
+          </div>
+
+          <form id="details-form" class="box stack-form">
+            <h3>Details</h3>
+            <label>Name<input id="pr-name" maxlength="80" required autocomplete="name"></label>
+            <label>About you <small>(optional)</small><textarea id="pr-bio" rows="3" maxlength="300" placeholder="e.g. CS student at UiTM, FYP on smart parking"></textarea></label>
+            <div class="form-foot"><span class="saved" id="details-saved" aria-live="polite"></span><p class="error" id="details-error" role="alert"></p><button class="btn primary" type="submit">Save</button></div>
+          </form>
+
+          <form id="email-form" class="box stack-form">
+            <h3>Email</h3>
+            <label>New email<input id="pr-email" type="email" required autocomplete="email"></label>
+            <label>Your password<input id="pr-email-password" type="password" required autocomplete="current-password"><small>To check it's really you.</small></label>
+            <div class="form-foot"><span class="saved" id="email-saved" aria-live="polite"></span><p class="error" id="email-error" role="alert"></p><button class="btn" type="submit">Change email</button></div>
+          </form>
+
+          <form id="password-form" class="box stack-form">
+            <h3>Password</h3>
+            <label>Current password<input id="pr-current" type="password" autocomplete="current-password" required></label>
+            <label>New password<input id="pr-new" type="password" autocomplete="new-password" minlength="8" required><small>At least 8 characters. Other browsers will be signed out.</small></label>
+            <div class="form-foot"><span class="saved" id="password-saved" aria-live="polite"></span><p class="error" id="password-error" role="alert"></p><button class="btn" type="submit">Change password</button></div>
+          </form>
+        </div>
       </section>
     </main>
   </div>
@@ -102,10 +175,12 @@
   <dialog id="task-panel" class="drawer">
     <div class="drawer-top">
       <span class="chip" id="t-where"></span>
+      <span class="chip sub-chip" id="t-kind" hidden>Subtask</span>
       <span class="saved" id="t-saved" aria-live="polite"></span>
       <button class="btn" id="t-close">Close</button>
     </div>
     <div class="drawer-body">
+      <button class="crumb" id="t-parent" hidden></button>
       <div class="title-row">
         <input type="checkbox" class="tick big" id="t-done" aria-label="Mark as done">
         <textarea id="t-title" class="t-title" rows="1" maxlength="140" aria-label="Task"></textarea>
@@ -129,11 +204,12 @@
         <h4>Notes</h4>
         <textarea id="t-notes" rows="3" maxlength="8000" placeholder="Lecturer’s instructions, links, anything useful"></textarea>
       </section>
-      <section>
-        <h4>Steps <span class="muted" id="t-step-count"></span></h4>
-        <ul class="steps" id="t-steps"></ul>
-        <form class="inline-form" id="t-step-form">
-          <input id="t-step-input" placeholder="Break it down: add a step" aria-label="New step" maxlength="200">
+      <section id="t-subtasks-section">
+        <h4>Subtasks <span class="muted" id="t-sub-count"></span></h4>
+        <div class="progress" id="t-sub-progress" hidden><i></i></div>
+        <ul class="subtasks" id="t-subtasks"></ul>
+        <form class="inline-form" id="t-sub-form">
+          <input id="t-sub-input" placeholder="Break it down: add a subtask" aria-label="New subtask" maxlength="140">
           <button class="btn" type="submit">Add</button>
         </form>
       </section>
@@ -167,9 +243,17 @@
   <dialog id="project-dialog">
     <form id="project-form" class="stack">
       <h3 id="pf-title">New project</h3>
+      <div class="field" id="pf-kind-field">
+        <span class="label-text">Type</span>
+        <div class="seg small" id="pf-kind" role="radiogroup" aria-label="Project type">
+          <button type="button" role="radio" data-kind="school">School</button>
+          <button type="button" role="radio" data-kind="personal">Personal</button>
+        </div>
+        <small class="muted" id="pf-kind-hint"></small>
+      </div>
       <label id="pf-name-field">Project name<input id="pf-name" maxlength="80" placeholder="Database group assignment"></label>
       <label id="pf-course-field">Course code <small>(optional)</small><input id="pf-course" maxlength="20" placeholder="CSC584"></label>
-      <label>Week 1 starts on <small>(optional)</small><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
+      <label id="pf-start-field">Week 1 starts on <small>(optional)</small><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
       <label id="pf-template-field">Start with
         <select id="pf-template">
           <option value="blank">Nothing, I’ll add tasks myself</option>
@@ -185,27 +269,6 @@
         <button class="btn primary" type="submit" id="pf-submit">Create</button>
       </div>
     </form>
-  </dialog>
-
-  <!-- Account -->
-  <dialog id="account-dialog">
-    <div class="stack">
-      <h3>Your account</h3>
-      <form id="name-form" class="stack">
-        <label>Name<input id="acc-name" maxlength="80" required autocomplete="name"></label>
-        <p class="muted small-note" id="acc-email"></p>
-        <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="submit">Save name</button></div>
-      </form>
-      <form id="password-form" class="stack">
-        <h4>Change password</h4>
-        <label>Current password<input id="acc-current" type="password" autocomplete="current-password" required></label>
-        <label>New password<input id="acc-new" type="password" autocomplete="new-password" minlength="8" required><small>At least 8 characters. Other browsers will be signed out.</small></label>
-        <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="submit">Change password</button></div>
-      </form>
-      <p class="error" id="acc-error" role="alert"></p>
-      <p class="saved" id="acc-saved" aria-live="polite"></p>
-      <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="button" id="acc-close">Close</button></div>
-    </div>
   </dialog>
 
   <div id="toast" class="toast" role="alert" hidden></div>

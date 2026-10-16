@@ -12,13 +12,14 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 const state = {
   me: null,
   boards: [],
-  view: { kind: 'mywork' }, // or { kind: 'board', id } or { kind: 'search', q }
+  view: { kind: 'mywork' }, // or { kind: 'board', id }, { kind: 'search', q } or { kind: 'profile' }
   board: null, members: [], tasks: [], // the open board
   myTasks: [],
   task: null, // the task open in the side panel
   onlyMine: false,
   showAllDone: false,
 };
+const TABS = ['summary', 'tasks', 'documents'];
 const DONE_SHOWN = 10; // the Done column shows the most recent ones until you ask for more
 
 // ---------- Helpers ----------
@@ -68,6 +69,21 @@ function h(tag, props = {}, ...children) {
 }
 
 const initials = (name) => name.split(/\s+/).filter((p) => /[A-Za-z]/.test(p[0])).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
+// A person's photo, or their initials when they haven't added one.
+function avatar(person, cls = 'avatar') {
+  const name = person?.name || person?.user_name || '?';
+  const url = person?.avatar_url || person?.user_avatar;
+  return url
+    ? h('img', { class: `${cls} photo`, src: url, alt: '', title: name })
+    : h('span', { class: cls, title: name }, initials(name) || '?');
+}
+const ago = (s) => {
+  const mins = Math.round((Date.now() - Date.parse(s.replace(' ', 'T') + 'Z')) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)} h ago`;
+  return fmtTime(s);
+};
 const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in the viewer's time zone
 const daysUntil = (date) => Math.round((Date.parse(date) - Date.parse(today())) / 86400000);
 const shortDate = (date) => new Date(date + 'T00:00').toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -143,7 +159,7 @@ function showAuth() {
 async function enterApp() {
   $('auth-view').hidden = true;
   $('app-view').hidden = false;
-  $('me-name').textContent = state.me.name;
+  renderMe();
   $('search-input').value = '';
   await loadBoards();
   const saved = localGet('tf-view');
@@ -152,13 +168,22 @@ async function enterApp() {
   else await showMyWork();
 }
 
+function renderMe() {
+  $('me-name').textContent = state.me.name;
+  $('me-avatar').replaceChildren(avatar(state.me));
+}
+
 // ---------- Navigation ----------
 async function loadBoards() {
   ({ boards: state.boards } = await api('/boards'));
   const projects = state.boards.filter((b) => !b.personal);
-  $('project-list').replaceChildren(...projects.map((b) => h('button', {
-    class: 'nav-item', 'data-board': b.id, onclick: () => showBoard(b.id),
-  }, h('span', { class: 'name' }, b.name), h('small', {}, b.course_code || ''))));
+  const item = (b) => h('button', { class: 'nav-item', 'data-board': b.id, onclick: () => showBoard(b.id) },
+    h('span', { class: 'name' }, b.name),
+    h('small', {}, b.kind === 'personal' ? 'Personal' : b.course_code || 'School'));
+  const pinned = projects.filter((b) => b.pinned);
+  $('pinned-label').hidden = !pinned.length;
+  $('pinned-list').replaceChildren(...pinned.map(item));
+  $('project-list').replaceChildren(...projects.filter((b) => !b.pinned).map(item));
   markNav();
 }
 
@@ -166,7 +191,8 @@ function markNav() {
   const v = state.view;
   $('nav-mywork').setAttribute('aria-current', v.kind === 'mywork');
   $('nav-personal').setAttribute('aria-current', v.kind === 'board' && v.id === personalBoard()?.id);
-  for (const el of document.querySelectorAll('#project-list .nav-item')) {
+  $('nav-profile').setAttribute('aria-current', v.kind === 'profile');
+  for (const el of document.querySelectorAll('#project-list .nav-item, #pinned-list .nav-item')) {
     el.setAttribute('aria-current', v.kind === 'board' && Number(el.dataset.board) === v.id);
   }
 }
@@ -175,7 +201,7 @@ $('nav-mywork').onclick = () => showMyWork();
 $('nav-personal').onclick = () => showBoard(personalBoard().id);
 
 function showView(name) {
-  for (const v of ['mywork', 'board', 'search']) $(`${v}-view`).hidden = v !== name;
+  for (const v of ['mywork', 'board', 'search', 'profile']) $(`${v}-view`).hidden = v !== name;
 }
 
 async function refresh() {
@@ -184,6 +210,7 @@ async function refresh() {
   const v = state.view;
   if (v.kind === 'mywork') await showMyWork();
   else if (v.kind === 'search') await showSearch(v.q);
+  else if (v.kind === 'profile') showProfile();
   else if (state.boards.some((b) => b.id === v.id)) await showBoard(v.id);
   else await showMyWork(); // the project was deleted or you were removed from it
 }
@@ -218,7 +245,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '/') { e.preventDefault(); $('search-input').focus(); }
   if (e.key === 'n') {
     e.preventDefault();
-    if (state.view.kind === 'board') document.querySelector('.column[data-status="todo"] .add-task input')?.focus();
+    if (state.view.kind === 'board') { setTab('tasks'); document.querySelector('.column[data-status="todo"] .add-task input')?.focus(); }
     else showMyWork().then(() => $('qa-title').focus());
   }
 });
@@ -282,9 +309,11 @@ function renderRow(t, { showBoard = false } = {}) {
     h('input', { type: 'checkbox', class: 'tick', checked: done, 'aria-label': `Mark "${t.title}" as done`,
       onclick: (e) => e.stopPropagation(),
       onchange: (e) => setDone(t.id, e.target.checked) }),
-    h('span', { class: 'title' }, t.title, t.important ? h('span', { class: 'star-mark', title: 'Important' }, ' ★') : ''),
+    h('span', { class: 'title' },
+      t.parent_title && h('small', { class: 'parent' }, `${t.parent_title} ›`),
+      t.title, t.important ? h('span', { class: 'star-mark', title: 'Important' }, ' ★') : ''),
     h('span', { class: 'meta' },
-      t.step_count ? h('span', {}, `${t.steps_done}/${t.step_count} steps`) : '',
+      t.subtask_count ? h('span', {}, `${t.subtasks_done}/${t.subtask_count} subtasks`) : '',
       t.file_count ? h('span', {}, `${t.file_count} file${t.file_count > 1 ? 's' : ''}`) : '',
       (!t.personal || showBoard) && h('span', { class: 'chip' }, t.personal ? 'Personal' : t.course_code || t.board_name),
       t.due_date && h('span', { class: dueClass(t.due_date, t.status) }, dueText(t.due_date, t.status))));
@@ -322,16 +351,46 @@ async function showBoard(id) {
   showView('board');
   markNav();
   renderBoard();
+  renderTab();
+}
+
+// Each project remembers which section you last looked at. New projects open on the Summary.
+const tabOf = (id) => { const t = localGet(`tf-tab-${id}`); return TABS.includes(t) ? t : 'summary'; };
+function setTab(tab) {
+  localSet(`tf-tab-${state.board.id}`, tab);
+  renderTab();
+}
+for (const tab of TABS) $(`tab-${tab}`).onclick = () => setTab(tab);
+document.querySelector('.tabs').addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const i = TABS.indexOf(tabOf(state.board.id)) + (e.key === 'ArrowRight' ? 1 : -1);
+  setTab(TABS[(i + TABS.length) % TABS.length]);
+  $(`tab-${tabOf(state.board.id)}`).focus();
+});
+function renderTab() {
+  const tab = tabOf(state.board.id);
+  for (const t of TABS) {
+    $(`tab-${t}`).setAttribute('aria-selected', t === tab);
+    $(`tab-${t}`).tabIndex = t === tab ? 0 : -1;
+    $(`panel-${t}`).hidden = t !== tab;
+  }
+  if (tab === 'summary') loadSummary();
+  if (tab === 'documents') loadDocuments();
 }
 
 function renderBoard() {
   const b = state.board;
   const personal = Boolean(b.personal);
   $('board-name').textContent = personal ? 'Personal' : b.name;
-  const week = weekOf(today(), b.sem_start);
+  const week = b.kind === 'school' ? weekOf(today(), b.sem_start) : null;
   const team = state.members.filter((m) => m.role !== 'supervisor').length;
   const bits = personal ? ['Only you can see this list']
-    : [b.course_code, `${team} ${team === 1 ? 'person' : 'people'}`, `you are ${ROLE_NAME[b.role].toLowerCase()}`];
+    : [b.kind === 'personal' ? 'Personal project' : b.course_code || 'School project',
+      `${team} ${team === 1 ? 'person' : 'people'}`, `you are ${ROLE_NAME[b.role].toLowerCase()}`];
+  $('pin-toggle').hidden = personal;
+  $('pin-toggle').setAttribute('aria-pressed', Boolean(b.pinned));
+  $('pin-toggle').textContent = b.pinned ? '★ Pinned' : '☆ Pin';
+  $('pin-toggle').title = b.pinned ? 'Unpin this project' : 'Pin this project to the top of the sidebar';
   $('board-sub').replaceChildren(bits.filter(Boolean).join(' · '), week ? ' · ' : '', week ? h('b', {}, `Week ${week}`) : '');
   $('show-team').hidden = personal;
   $('show-contrib').hidden = personal || team < 2;
@@ -339,6 +398,13 @@ function renderBoard() {
   $('show-settings').hidden = b.role !== 'owner';
   $('columns').replaceChildren(...COLUMNS.map(renderColumn));
 }
+
+$('pin-toggle').onclick = async () => {
+  await api(`/boards/${state.board.id}/pin`, { method: state.board.pinned ? 'DELETE' : 'PUT' });
+  state.board.pinned = state.board.pinned ? 0 : 1;
+  renderBoard();
+  await loadBoards();
+};
 
 $('filter-mine').onchange = (e) => { state.onlyMine = e.target.checked; renderBoard(); };
 
@@ -372,7 +438,7 @@ function renderColumn(col) {
 function renderCard(t) {
   const who = !state.board.personal && state.members.find((m) => m.id === t.assignee_id);
   const extras = [
-    t.step_count ? `${t.steps_done}/${t.step_count} steps` : null,
+    t.subtask_count ? `${t.subtasks_done}/${t.subtask_count} subtasks` : null,
     t.file_count ? `${t.file_count} file${t.file_count > 1 ? 's' : ''}` : null,
     t.comment_count ? `${t.comment_count} comment${t.comment_count > 1 ? 's' : ''}` : null,
   ].filter(Boolean).join(' · ');
@@ -388,7 +454,8 @@ function renderCard(t) {
       t.due_date && h('span', { class: dueClass(t.due_date, t.status) }, dueText(t.due_date, t.status)),
       extras && h('span', {}, extras),
       h('span', { class: 'spacer' }),
-      who && h('span', { class: 'avatar', title: who.name }, initials(who.name))));
+      who && avatar(who)),
+    t.subtask_count > 0 && h('span', { class: 'progress thin' }, h('i', { style: `width:${Math.round((t.subtasks_done / t.subtask_count) * 100)}%` })));
   card.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', String(t.id));
     e.dataTransfer.effectAllowed = 'move';
@@ -443,6 +510,130 @@ function enableDrop(column, cards, status) {
   });
 }
 
+// ---------- Summary ----------
+const STATUS_COLOR = { todo: 'var(--todo)', doing: 'var(--doing)', done: 'var(--done)' };
+async function loadSummary() {
+  const id = state.board.id;
+  const data = await api(`/boards/${id}/summary`);
+  if (state.view.kind !== 'board' || state.view.id !== id) return;
+  renderSummary(data);
+}
+
+function renderSummary({ status, activity, workload, unassigned }) {
+  const b = state.board;
+  const edit = canWork(b.role);
+  const total = status.todo + status.doing + status.done;
+  const pct = total ? Math.round((status.done / total) * 100) : 0;
+  const saveBoard = (body) => api(`/boards/${b.id}`, { method: 'PATCH', body }).then(({ board }) => {
+    state.board = board;
+    loadSummary();
+  });
+
+  const about = h('section', { class: 'box summary-about' },
+    h('h3', {}, 'About this project'),
+    edit
+      ? h('textarea', { rows: 4, maxlength: 4000, 'aria-label': 'Description',
+          placeholder: 'What is this project about? Add the brief, the lecturer, links, anything the team should know.',
+          onchange: (e) => saveBoard({ description: e.target.value }) }, b.description || '')
+      : h('p', { class: 'prewrap' }, b.description || 'No description yet.'));
+
+  const daysLeft = b.goal_date ? daysUntil(b.goal_date) : null;
+  const goal = h('section', { class: 'box summary-goal' },
+    h('h3', {}, 'Goal'),
+    edit
+      ? h('input', { value: b.goal || '', maxlength: 300, 'aria-label': 'Goal', placeholder: 'e.g. Submit the final report by Week 14',
+          onchange: (e) => saveBoard({ goal: e.target.value }) })
+      : h('p', {}, b.goal || 'No goal set yet.'),
+    h('label', { class: 'inline-label' }, 'Target date',
+      h('input', { type: 'date', value: b.goal_date || '', disabled: !edit, onchange: (e) => saveBoard({ goal_date: e.target.value || null }) })),
+    h('div', { class: 'goal-progress' },
+      h('div', { class: 'progress' }, h('i', { style: `width:${pct}%` })),
+      h('span', {}, h('b', {}, `${pct}%`), ' done',
+        daysLeft == null ? '' : daysLeft < 0 ? ` · target passed ${-daysLeft} days ago` : daysLeft === 0 ? ' · target is today' : ` · ${daysLeft} days to go`)));
+
+  const work = h('section', { class: 'box summary-status' },
+    h('h3', {}, 'Work items'),
+    h('div', { class: 'stat-row' }, COLUMNS.map((c) => h('div', { class: 'stat' },
+      h('span', { class: 'stat-num' }, String(status[c.status])),
+      h('span', { class: 'stat-label' }, h('span', { class: 'dot', style: `background:${c.color}` }), c.label)))),
+    total > 0 && h('div', { class: 'stacked', role: 'img', 'aria-label': `${status.todo} to do, ${status.doing} doing, ${status.done} done` },
+      COLUMNS.map((c) => status[c.status] > 0 && h('i', { style: `flex:${status[c.status]};background:${STATUS_COLOR[c.status]}` }))),
+    h('p', { class: 'muted small-note' }, [
+      total ? `${total} item${total === 1 ? '' : 's'}${status.subtasks ? `, including ${status.subtasks} subtask${status.subtasks === 1 ? '' : 's'}` : ''}` : 'No tasks yet.',
+      status.late ? h('span', { class: 'due late' }, ` · ${status.late} late`) : '',
+      status.due_soon ? ` · ${status.due_soon} due in the next 7 days` : '',
+    ]),
+    h('button', { class: 'link', onclick: () => setTab('tasks') }, 'Open tasks'));
+
+  const recent = h('section', { class: 'box summary-activity' },
+    h('h3', {}, 'Recent activity'),
+    activity.length
+      ? h('ul', { class: 'activity' }, activity.map((a) => h('li', {},
+          avatar(a),
+          h('span', {}, h('b', {}, a.user_id === state.me.id ? 'You' : a.user_name || 'Someone'), ' ', a.detail),
+          h('time', { datetime: a.created_at, title: fmtTime(a.created_at) }, ago(a.created_at)))))
+      : h('p', { class: 'muted' }, 'Nothing has happened yet.'));
+
+  const team = workload.length > 1 && h('section', { class: 'box summary-team' },
+    h('h3', {}, 'Team workload'),
+    h('ul', { class: 'workload' }, (() => {
+      const most = Math.max(1, ...workload.map((w) => w.todo + w.doing + w.done));
+      return workload.map((w) => h('li', {},
+        avatar(w),
+        h('span', { class: 'who' }, w.id === state.me.id ? `${w.name} (you)` : w.name),
+        h('span', { class: 'stacked small', title: `${w.todo} to do, ${w.doing} doing, ${w.done} done` },
+          ['todo', 'doing', 'done'].map((k) => w[k] > 0 && h('i', { style: `width:${(w[k] / most) * 100}%;background:${STATUS_COLOR[k]}` }))),
+        h('span', { class: 'counts' }, `${w.todo + w.doing} open`, w.late ? h('span', { class: 'due late' }, ` · ${w.late} late`) : '')));
+    })()),
+    unassigned > 0 && h('p', { class: 'muted small-note' }, `${unassigned} open task${unassigned === 1 ? ' has' : 's have'} nobody assigned.`));
+
+  $('panel-summary').replaceChildren(about, goal, work, recent, team || '');
+}
+
+// ---------- Documents ----------
+async function loadDocuments() {
+  const id = state.board.id;
+  const { documents, taskFiles } = await api(`/boards/${id}/documents`);
+  if (state.view.kind !== 'board' || state.view.id !== id) return;
+  const edit = canWork(state.board.role);
+  $('doc-upload').hidden = !edit;
+  const fileRow = (f, { href, onDelete, task }) => h('li', {},
+    h('span', { class: 'ext' }, f.filename.split('.').pop()),
+    h('span', { class: 'grow' },
+      h('a', { href, download: f.filename }, f.filename),
+      h('small', {}, [fmtSize(f.size), f.user_name || 'someone', fmtTime(f.created_at)].join(' · '))),
+    task && h('button', { class: 'link', onclick: () => openTask(f.task_id) }, `In “${f.task_title}”`),
+    onDelete && h('button', { class: 'link', onclick: onDelete }, 'Delete'));
+  const canDelete = (f) => edit && (f.user_id === state.me.id || state.board.role === 'owner');
+  $('doc-list').replaceChildren(...(documents.length ? documents.map((d) => fileRow(d, {
+    href: `/api/documents/${d.id}`,
+    onDelete: canDelete(d) && (async () => { await api(`/documents/${d.id}`, { method: 'DELETE' }); loadDocuments(); }),
+  })) : [h('li', { class: 'empty-row' }, edit ? 'No documents yet. Add the assignment brief, rubric or anything the whole project needs.' : 'No documents yet.')]));
+  $('task-file-list').replaceChildren(...(taskFiles.length ? taskFiles.map((f) => fileRow(f, { href: `/api/attachments/${f.id}`, task: true }))
+    : [h('li', { class: 'empty-row' }, 'Files attached to tasks show up here too.')]));
+}
+
+async function uploadDocuments(files) {
+  $('doc-error').textContent = '';
+  for (const file of files) {
+    if (file.size > MAX_UPLOAD) { $('doc-error').textContent = `${file.name} is bigger than 10 MB.`; continue; }
+    try {
+      await api(`/boards/${state.board.id}/documents`, {
+        method: 'POST', raw: file,
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      });
+    } catch (err) {
+      $('doc-error').textContent = `${file.name}: ${err.message}`;
+    }
+  }
+  loadDocuments();
+}
+$('doc-file-input').onchange = (e) => { uploadDocuments([...e.target.files]); e.target.value = ''; };
+const docDrop = $('doc-upload');
+docDrop.addEventListener('dragover', (e) => { e.preventDefault(); docDrop.classList.add('drag'); });
+docDrop.addEventListener('dragleave', () => docDrop.classList.remove('drag'));
+docDrop.addEventListener('drop', (e) => { e.preventDefault(); docDrop.classList.remove('drag'); uploadDocuments([...e.dataTransfer.files]); });
+
 // ---------- Task panel ----------
 // Every change saves straight away.
 let panelRole = null;
@@ -466,13 +657,19 @@ async function reloadTask() {
 function renderTask() {
   const t = state.task;
   const edit = canWork(panelRole);
+  const isSub = Boolean(t.parent_id);
+  $('task-panel').classList.toggle('is-subtask', isSub);
   $('t-where').textContent = t.personal ? 'Personal' : [t.course_code, t.board_name].filter(Boolean).join(' · ');
+  $('t-kind').hidden = !isSub;
+  $('t-parent').hidden = !isSub;
+  $('t-parent').replaceChildren('← Back to ', h('b', {}, t.parent_title || 'the task'));
+  $('t-done').setAttribute('aria-label', isSub ? 'Mark subtask as done' : 'Mark as done');
   $('t-done').checked = t.status === 'done';
   $('t-title').value = t.title;
   $('t-important').setAttribute('aria-pressed', Boolean(t.important));
   for (const b of $('t-status').querySelectorAll('button')) b.setAttribute('aria-pressed', b.dataset.status === t.status);
   $('t-due').value = t.due_date || '';
-  const week = weekOf(t.due_date, t.sem_start);
+  const week = t.kind === 'school' ? weekOf(t.due_date, t.sem_start) : null;
   $('t-week').textContent = [t.due_date && t.status !== 'done' ? dueText(t.due_date) : '', week ? `Week ${week}` : ''].filter(Boolean).join(' · ');
   $('t-notes').value = t.notes;
 
@@ -484,15 +681,27 @@ function renderTask() {
   for (const id of ['t-title', 't-due', 't-notes', 't-assignee', 't-important']) $(id).disabled = !edit;
   $('t-done').disabled = false;
 
-  // Steps
-  const stepsDone = t.steps.filter((s) => s.done).length;
-  $('t-step-count').textContent = t.steps.length ? `${stepsDone}/${t.steps.length}` : '';
-  $('t-steps').replaceChildren(...t.steps.map((s) => h('li', { class: s.done ? 'done' : '' },
-    h('input', { type: 'checkbox', class: 'tick', checked: Boolean(s.done), disabled: !edit, 'aria-label': s.text,
-      onchange: (e) => save(() => api(`/steps/${s.id}`, { method: 'PATCH', body: { done: e.target.checked } })) }),
-    h('span', {}, s.text),
-    edit && h('button', { class: 'link', onclick: () => save(() => api(`/steps/${s.id}`, { method: 'DELETE' })) }, 'Remove'))));
-  $('t-step-form').hidden = !edit;
+  // Subtasks: only top-level tasks have them. Each one opens in its own panel.
+  $('t-subtasks-section').hidden = isSub;
+  const subs = t.subtasks || [];
+  const subsDone = subs.filter((x) => x.status === 'done').length;
+  $('t-sub-count').textContent = subs.length ? `${subsDone}/${subs.length}` : '';
+  $('t-sub-progress').hidden = !subs.length;
+  $('t-sub-progress').firstElementChild.style.width = subs.length ? `${(subsDone / subs.length) * 100}%` : '0';
+  $('t-subtasks').replaceChildren(...subs.map((x) => {
+    const who = panelMembers.find((m) => m.id === x.assignee_id);
+    return h('li', { class: x.status === 'done' ? 'done' : '' },
+      h('input', { type: 'checkbox', class: 'tick', checked: x.status === 'done', disabled: panelRole === null, 'aria-label': `Mark "${x.title}" as done`,
+        onchange: (e) => save(() => api(`/tasks/${x.id}`, { method: 'PATCH', body: { status: e.target.checked ? 'done' : 'todo' } })) }),
+      h('button', { class: 'sub-open', onclick: () => openTask(x.id) },
+        h('span', { class: 'sub-title' }, x.title),
+        h('span', { class: 'sub-meta' },
+          x.status === 'doing' && h('span', { class: 'chip doing' }, 'Doing'),
+          x.due_date && h('span', { class: dueClass(x.due_date, x.status) }, dueText(x.due_date, x.status)),
+          who && !t.personal && avatar(who),
+          h('span', { class: 'chev', 'aria-hidden': 'true' }, '›'))));
+  }));
+  $('t-sub-form').hidden = !edit;
 
   // Files
   $('t-files').replaceChildren(...t.attachments.map((a) => h('li', {},
@@ -507,7 +716,7 @@ function renderTask() {
   // Discussion (team projects only)
   $('t-comments-section').hidden = Boolean(t.personal);
   $('t-comments').replaceChildren(...t.comments.map((c) => h('li', {},
-    h('span', { class: 'avatar' }, initials(c.user_name || '?')),
+    avatar(c),
     h('div', {},
       h('div', { class: 'who' }, c.user_name || 'Someone', h('time', { datetime: c.created_at }, fmtTime(c.created_at)),
         (c.user_id === state.me.id || panelRole === 'owner') &&
@@ -515,6 +724,8 @@ function renderTask() {
       h('p', {}, c.body)))));
 
   $('t-delete').hidden = !edit;
+  $('t-delete').dataset.armed = '';
+  $('t-delete').textContent = $('t-delete').dataset.label = isSub ? 'Delete subtask' : 'Delete task';
   $('t-meta').textContent = t.personal ? '' : `Added by ${t.created_by_name || 'someone'}`;
 }
 
@@ -543,13 +754,14 @@ $('t-due').onchange = (e) => patch({ dueDate: e.target.value || null });
 $('t-notes').onchange = (e) => patch({ notes: e.target.value });
 $('t-assignee').onchange = (e) => patch({ assigneeId: e.target.value ? Number(e.target.value) : null });
 
-$('t-step-form').onsubmit = (e) => {
+$('t-sub-form').onsubmit = (e) => {
   e.preventDefault();
-  const text = $('t-step-input').value.trim();
-  if (!text) return;
-  $('t-step-input').value = '';
-  save(() => api(`/tasks/${state.task.id}/steps`, { method: 'POST', body: { text } })).then(() => $('t-step-input').focus());
+  const title = $('t-sub-input').value.trim();
+  if (!title) return;
+  $('t-sub-input').value = '';
+  save(() => api(`/tasks/${state.task.id}/subtasks`, { method: 'POST', body: { title } })).then(() => $('t-sub-input').focus());
 };
+$('t-parent').onclick = () => openTask(state.task.parent_id);
 
 $('t-comment-form').onsubmit = (e) => {
   e.preventDefault();
@@ -583,8 +795,10 @@ drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
 drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('drag'); uploadFiles([...e.dataTransfer.files]); });
 
 // Two-step delete: the first click asks, the second confirms.
-function confirmTwice(btn, label, action) {
+function confirmTwice(btn, action) {
   return async () => {
+    const label = btn.dataset.label || btn.textContent;
+    btn.dataset.label = label;
     if (btn.dataset.armed !== 'true') {
       btn.dataset.armed = 'true';
       btn.textContent = 'Click again to delete';
@@ -596,9 +810,11 @@ function confirmTwice(btn, label, action) {
     await action();
   };
 }
-$('t-delete').onclick = confirmTwice($('t-delete'), 'Delete task', async () => {
-  await api(`/tasks/${state.task.id}`, { method: 'DELETE' });
-  $('task-panel').close();
+$('t-delete').onclick = confirmTwice($('t-delete'), async () => {
+  const { id, parent_id: parentId } = state.task;
+  await api(`/tasks/${id}`, { method: 'DELETE' });
+  // Deleting a subtask goes back to its task; deleting a task closes the panel.
+  if (parentId) await openTask(parentId); else $('task-panel').close();
 });
 $('t-close').onclick = () => $('task-panel').close();
 $('task-panel').addEventListener('close', () => { state.task = null; refresh(); });
@@ -607,19 +823,37 @@ $('task-panel').addEventListener('click', (e) => { if (e.target === $('task-pane
 
 // ---------- Project setup and settings ----------
 let editing = null;
+let formKind = 'school';
+function setFormKind(kind) {
+  formKind = kind;
+  const school = kind === 'school';
+  for (const b of $('pf-kind').querySelectorAll('button')) b.setAttribute('aria-checked', b.dataset.kind === kind);
+  $('pf-kind-hint').textContent = school
+    ? 'For courses, group assignments and your FYP. Shows the course code and semester week.'
+    : 'For anything outside class: a side project, a club, an event or a trip.';
+  $('pf-course-field').hidden = !school;
+  $('pf-start-field').hidden = !school;
+  $('pf-template-field').hidden = Boolean(editing) || !school;
+  $('pf-name').placeholder = school ? 'Database group assignment' : 'Portfolio website';
+}
+for (const b of $('pf-kind').querySelectorAll('button')) b.onclick = () => setFormKind(b.dataset.kind);
+
 function openProjectDialog(board) {
   editing = board;
   const personal = Boolean(board?.personal);
   $('pf-title').textContent = personal ? 'Semester week' : board ? 'Project settings' : 'New project';
   $('pf-submit').textContent = board ? 'Save' : 'Create';
-  $('pf-name-field').hidden = personal;
-  $('pf-course-field').hidden = personal;
   $('pf-name').value = board?.name ?? '';
   $('pf-course').value = board?.course_code ?? '';
   $('pf-start').value = board?.sem_start ?? personalBoard()?.sem_start ?? '';
-  $('pf-template-field').hidden = Boolean(board);
+  $('pf-template').value = 'blank';
   $('pf-delete').hidden = !board || personal;
   $('pf-error').textContent = '';
+  setFormKind(personal ? 'school' : board?.kind ?? 'school');
+  // The personal list only has a Week 1 date.
+  $('pf-kind-field').hidden = personal;
+  $('pf-name-field').hidden = personal;
+  if (personal) $('pf-course-field').hidden = true;
   $('project-dialog').showModal();
 }
 $('new-project').onclick = () => openProjectDialog(null);
@@ -627,14 +861,17 @@ $('show-settings').onclick = () => openProjectDialog(state.board);
 $('pf-cancel').onclick = () => $('project-dialog').close();
 $('project-form').onsubmit = async (e) => {
   e.preventDefault();
-  const body = { name: $('pf-name').value, course_code: $('pf-course').value, sem_start: $('pf-start').value || null };
+  const body = editing?.personal
+    ? { sem_start: $('pf-start').value || null }
+    : { name: $('pf-name').value, kind: formKind, course_code: $('pf-course').value, sem_start: $('pf-start').value || null };
   try {
     if (editing) {
       await api(`/boards/${editing.id}`, { method: 'PATCH', body });
       $('project-dialog').close();
       await refresh();
     } else {
-      const { board } = await api('/boards', { method: 'POST', body: { ...body, template: $('pf-template').value } });
+      const template = formKind === 'school' ? $('pf-template').value : 'blank';
+      const { board } = await api('/boards', { method: 'POST', body: { ...body, template } });
       $('project-dialog').close();
       await loadBoards();
       await showBoard(board.id);
@@ -643,42 +880,82 @@ $('project-form').onsubmit = async (e) => {
     $('pf-error').textContent = err.message;
   }
 };
-$('pf-delete').onclick = confirmTwice($('pf-delete'), 'Delete project', async () => {
+$('pf-delete').onclick = confirmTwice($('pf-delete'), async () => {
   await api(`/boards/${editing.id}`, { method: 'DELETE' });
   $('project-dialog').close();
   await loadBoards();
   await showMyWork();
 });
 
-// ---------- Account ----------
-function accountMessage(error, saved = '') {
-  $('acc-error').textContent = error;
-  $('acc-saved').textContent = saved;
+// ---------- Profile ----------
+function showProfile() {
+  state.view = { kind: 'profile' };
+  showView('profile');
+  markNav();
+  renderProfile();
 }
-$('me-name').onclick = () => {
-  $('acc-name').value = state.me.name;
-  $('acc-email').textContent = `Signed in as ${state.me.email}`;
+function renderProfile() {
+  const me = state.me;
+  $('profile-avatar').replaceChildren(avatar(me, 'avatar avatar-xl'));
+  $('profile-name').textContent = me.name;
+  $('profile-email').textContent = me.email;
+  $('profile-bio').textContent = me.bio || '';
+  $('profile-bio').hidden = !me.bio;
+  $('photo-remove').hidden = !me.avatar_url;
+  $('pr-name').value = me.name;
+  $('pr-bio').value = me.bio || '';
+  $('pr-email').value = me.email;
+  renderMe();
+}
+$('nav-profile').onclick = () => {
+  for (const f of ['email-form', 'password-form']) $(f).reset();
+  for (const id of ['photo-error', 'details-error', 'details-saved', 'email-error', 'email-saved', 'password-error', 'password-saved']) $(id).textContent = '';
+  showProfile();
+};
+
+// Each form shows its own result beside its button.
+function profileForm(id, action) {
+  $(`${id}-form`).onsubmit = async (e) => {
+    e.preventDefault();
+    $(`${id}-error`).textContent = '';
+    $(`${id}-saved`).textContent = '';
+    try {
+      $(`${id}-saved`).textContent = await action();
+      renderProfile();
+    } catch (err) { $(`${id}-error`).textContent = err.message; }
+  };
+}
+profileForm('details', async () => {
+  ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body: { name: $('pr-name').value, bio: $('pr-bio').value } }));
+  return 'Saved.';
+});
+profileForm('email', async () => {
+  ({ user: state.me } = await api('/auth/email', { method: 'POST', body: { email: $('pr-email').value, password: $('pr-email-password').value } }));
+  $('pr-email-password').value = '';
+  return 'Email changed. Use it next time you log in.';
+});
+profileForm('password', async () => {
+  await api('/auth/password', { method: 'POST', body: { currentPassword: $('pr-current').value, newPassword: $('pr-new').value } });
   $('password-form').reset();
-  accountMessage('');
-  $('account-dialog').showModal();
-};
-$('acc-close').onclick = () => $('account-dialog').close();
-$('name-form').onsubmit = async (e) => {
-  e.preventDefault();
+  return 'Password changed. Other browsers have been signed out.';
+});
+
+$('photo-input').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  $('photo-error').textContent = '';
+  if (file.size > 2 * 1024 * 1024) { $('photo-error').textContent = 'Photos can be up to 2 MB.'; return; }
   try {
-    ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body: { name: $('acc-name').value } }));
-    $('me-name').textContent = state.me.name;
-    accountMessage('', 'Name saved.');
-    refresh();
-  } catch (err) { accountMessage(err.message); }
+    const { avatar_url } = await api('/me/avatar', { method: 'PUT', raw: file, headers: { 'Content-Type': 'application/octet-stream' } });
+    state.me = { ...state.me, avatar_url };
+    renderProfile();
+  } catch (err) { $('photo-error').textContent = err.message; }
 };
-$('password-form').onsubmit = async (e) => {
-  e.preventDefault();
-  try {
-    await api('/auth/password', { method: 'POST', body: { currentPassword: $('acc-current').value, newPassword: $('acc-new').value } });
-    $('password-form').reset();
-    accountMessage('', 'Password changed. Other browsers have been signed out.');
-  } catch (err) { accountMessage(err.message); }
+$('photo-remove').onclick = async () => {
+  await api('/me/avatar', { method: 'DELETE' });
+  state.me = { ...state.me, avatar_url: null };
+  renderProfile();
 };
 
 // ---------- Team and contributions ----------
@@ -702,7 +979,7 @@ function renderTeam() {
     } catch (err) { error.textContent = err.message; }
   };
   const rows = state.members.map((m) => h('div', { class: 'member' },
-    h('span', { class: 'avatar' }, initials(m.name)),
+    avatar(m),
     h('span', {}, m.id === state.me.id ? `${m.name} (you)` : m.name, h('small', {}, m.email)),
     leader
       ? h('select', { 'aria-label': `Role for ${m.name}`,

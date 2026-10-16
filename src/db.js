@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 const FIRST_VERSION = 3;
 
-const SCHEMA = `
+export const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id            INTEGER PRIMARY KEY,
   email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -98,11 +98,54 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS idx_activity_board ON activity(board_id, id);
 `;
 
-// Changes to the schema after version 3, the first release. Each entry upgrades
-// a database from the version before it, so existing tasks and files are kept.
-// SCHEMA above always describes the latest version, for brand-new databases.
+// Changes to the schema since version 3, the first release. Each entry upgrades a
+// database from the version before it, so existing tasks and files are kept.
+// A brand-new database gets BASE_SCHEMA and then every migration in order.
 const MIGRATIONS = {
   4: `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`,
+
+  // Profiles, school or personal projects, pins, project summaries, subtasks and documents.
+  5: `
+    ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN avatar TEXT; -- stored file name of the profile photo
+
+    ALTER TABLE boards ADD COLUMN kind TEXT NOT NULL DEFAULT 'school' CHECK (kind IN ('school', 'personal'));
+    ALTER TABLE boards ADD COLUMN description TEXT NOT NULL DEFAULT '';
+    ALTER TABLE boards ADD COLUMN goal TEXT NOT NULL DEFAULT '';
+    ALTER TABLE boards ADD COLUMN goal_date TEXT;
+    UPDATE boards SET kind = 'personal' WHERE personal = 1;
+
+    CREATE TABLE pins (
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      board_id   INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, board_id)
+    );
+
+    -- Files that belong to the project as a whole rather than to one task.
+    CREATE TABLE documents (
+      id          INTEGER PRIMARY KEY,
+      board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+      user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      filename    TEXT NOT NULL,
+      mime        TEXT NOT NULL,
+      size        INTEGER NOT NULL,
+      stored_name TEXT NOT NULL UNIQUE,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX idx_documents_board ON documents(board_id, id);
+
+    -- A subtask is a task with a parent. Only one level deep.
+    ALTER TABLE tasks ADD COLUMN parent_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE;
+    CREATE INDEX idx_tasks_parent ON tasks(parent_id, position);
+
+    -- Steps become subtasks, so they get their own status, owner and due date.
+    INSERT INTO tasks (board_id, parent_id, title, status, position, assignee_id, completed_at, created_by)
+      SELECT t.board_id, t.id, s.text, CASE WHEN s.done THEN 'done' ELSE 'todo' END, s.position * 1024,
+             t.assignee_id, CASE WHEN s.done THEN datetime('now') END, t.created_by
+      FROM steps s JOIN tasks t ON t.id = s.task_id ORDER BY s.task_id, s.position;
+    DROP TABLE steps;
+  `,
 };
 const SCHEMA_VERSION = Math.max(FIRST_VERSION, ...Object.keys(MIGRATIONS).map(Number));
 
@@ -116,7 +159,7 @@ export function openDb(file = DB_FILE) {
   const { user_version: version } = db.prepare('PRAGMA user_version').get();
   const hasTables = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`).get();
   if (!hasTables) {
-    db.exec(SCHEMA);
+    db.exec(BASE_SCHEMA);
     for (const sql of Object.values(MIGRATIONS)) db.exec(sql);
   } else if (version < FIRST_VERSION) {
     throw new Error(`${file} was made by a TaskForge preview. Move it out of the way to start fresh.`);
