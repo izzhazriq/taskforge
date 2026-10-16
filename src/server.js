@@ -5,8 +5,10 @@ import { openDb, backup } from './db.js';
 import { DEMO, UPLOAD_DIR, BACKUP_DIR, PORT } from './config.js';
 import { requireUser } from './auth.js';
 import { authRoutes } from './routes/auth.js';
-import { boardRoutes } from './routes/boards.js';
-import { taskRoutes, MAX_UPLOAD_BYTES } from './routes/tasks.js';
+import { boardRoutes, documentRoutes } from './routes/boards.js';
+import { userRoutes } from './routes/users.js';
+import { taskRoutes } from './routes/tasks.js';
+import { MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES } from './files.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +27,9 @@ export function createApp(db, { uploadDir = UPLOAD_DIR } = {}) {
   });
 
   app.use('/api/auth', authRoutes(db));
-  app.use('/api/boards', requireUser(db), boardRoutes(db));
+  app.use('/api/boards', requireUser(db), boardRoutes(db, { uploadDir }));
+  app.use('/api/documents', requireUser(db), documentRoutes(db, { uploadDir }));
+  app.use('/api', requireUser(db), userRoutes(db, { uploadDir }));
   app.use('/api', requireUser(db), taskRoutes(db, { uploadDir }));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -35,7 +39,8 @@ export function createApp(db, { uploadDir = UPLOAD_DIR } = {}) {
   app.use((err, req, res, _next) => {
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Request body must be valid JSON.' });
     if (err.type === 'entity.too.large') {
-      return res.status(413).json({ error: `Files can be up to ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.` });
+      const max = req.path.endsWith('/avatar') ? MAX_AVATAR_BYTES : MAX_UPLOAD_BYTES;
+      return res.status(413).json({ error: `Files can be up to ${max / 1024 / 1024} MB.` });
     }
     const status = err.status || 500;
     if (status >= 500) console.error(err);

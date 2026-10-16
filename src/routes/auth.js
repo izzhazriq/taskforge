@@ -47,17 +47,25 @@ export function authRoutes(db) {
   r.get('/info', (req, res) => res.json({ demo: DEMO }));
 
   r.patch('/me', requireUser(db), (req, res) => {
-    const name = v.text(req.body.name, 'Name', { max: 80 });
-    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, req.user.id);
-    res.json({ user: { ...req.user, name } });
+    const name = req.body.name === undefined ? req.user.name : v.text(req.body.name, 'Name', { max: 80 });
+    const bio = req.body.bio === undefined ? req.user.bio : v.text(req.body.bio, 'About you', { max: 300, required: false });
+    db.prepare('UPDATE users SET name = ?, bio = ? WHERE id = ?').run(name, bio, req.user.id);
+    res.json({ user: { ...req.user, name, bio } });
+  });
+
+  // Changing the email you log in with needs your password, in case someone else is at your laptop.
+  r.post('/email', requireUser(db), (req, res) => {
+    checkPassword(req.user.id, req.body.password, 'Your password is incorrect.');
+    const email = v.email(req.body.email);
+    const taken = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (taken && taken.id !== req.user.id) throw new HttpError(409, 'An account with that email already exists.');
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(email, req.user.id);
+    res.json({ user: { ...req.user, email } });
   });
 
   // Changing the password signs out every other browser.
   r.post('/password', requireUser(db), (req, res) => {
-    const { password_hash: hash } = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(req.user.id);
-    if (!verifyPassword(String(req.body.currentPassword ?? ''), hash)) {
-      throw new HttpError(400, 'Your current password is incorrect.');
-    }
+    checkPassword(req.user.id, req.body.currentPassword, 'Your current password is incorrect.');
     const password = v.password(req.body.newPassword);
     transaction(db, () => {
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), req.user.id);
@@ -66,6 +74,11 @@ export function authRoutes(db) {
     createSession(db, res, req.user.id);
     res.status(204).end();
   });
+
+  function checkPassword(userId, password, message) {
+    const { password_hash: hash } = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+    if (!verifyPassword(String(password ?? ''), hash)) throw new HttpError(400, message);
+  }
 
   return r;
 }

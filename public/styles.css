@@ -82,7 +82,7 @@ label.check input { width: auto; }
 .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button { font: 600 14px var(--font-body); background: var(--bg); color: var(--muted); border: 0; padding: 8px; cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-selected="true"], .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.seg button[aria-selected="true"], .seg button[aria-pressed="true"], .seg button[aria-checked="true"] { background: var(--ink); color: var(--surface); }
 .seg.small button { font-size: 13px; padding: 6px 8px; }
 .seg button:disabled { cursor: not-allowed; }
 
@@ -105,8 +105,10 @@ label.check input { width: auto; }
 .nav-item.add { color: var(--muted); }
 .badge { background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 600; border-radius: 999px; padding: 0 8px; }
 .me { display: flex; justify-content: space-between; align-items: center; font-size: 14px; border-top: 1px solid var(--line); padding: 12px 8px 0; }
-.me-link { color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 600; text-align: left; overflow-wrap: anywhere; }
-.me-link:hover { text-decoration: underline; }
+.me-link { display: flex; align-items: center; gap: 8px; min-width: 0; background: none; border: 0; border-radius: 8px; padding: 4px 6px 4px 0;
+  color: var(--ink); font: 600 14px var(--font-body); text-align: left; cursor: pointer; }
+.me-link:hover, .me-link[aria-current="true"] { background: var(--bg); }
+.me-link #me-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search input { background: var(--bg); padding: 7px 10px; font-size: 14px; }
 
 .main { padding: 28px; min-width: 0; }
@@ -242,4 +244,99 @@ dialog.drawer[open] { display: flex; flex-direction: column; }
   .columns { grid-template-columns: minmax(0, 1fr); }
   .row-item { flex-wrap: wrap; }
   .row-item .meta { width: 100%; justify-content: flex-start; padding-left: 32px; }
+}
+
+/* ----- Avatars ----- */
+img.avatar { object-fit: cover; background: var(--chip); }
+.avatar-xl { width: 88px; height: 88px; font-size: 30px; }
+
+/* ----- Project header and sections ----- */
+.title-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pin { font: 600 13px var(--font-body); color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.pin:hover { border-color: var(--ink); color: var(--ink); }
+.pin[aria-pressed="true"] { color: var(--star); border-color: var(--star); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { font: 600 14px var(--font-body); color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px; cursor: pointer; white-space: nowrap; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.stack-tight { display: grid; gap: 12px; }
+#panel-tasks .check { justify-self: start; }
+
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+section.box, form.box, div.box.profile-card { padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+section.box h3, form.box h3 { font-size: 15px; }
+.summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.summary-about, .summary-activity, .summary-team { grid-column: span 1; }
+.summary-team { grid-column: 1 / -1; }
+.prewrap { white-space: pre-wrap; margin: 0; overflow-wrap: anywhere; }
+.inline-label { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.inline-label input { width: auto; }
+.progress { height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--done); border-radius: 4px; }
+.progress.thin { height: 4px; display: block; }
+.goal-progress { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+.goal-progress b { color: var(--ink); font-size: 15px; }
+.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { display: grid; gap: 2px; }
+.stat-num { font: 800 28px/1 var(--font-display); }
+.stat-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.stat-label .dot { width: 8px; height: 8px; border-radius: 50%; }
+.stacked { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--chip); gap: 2px; }
+.stacked.small { height: 8px; gap: 1px; }
+.stacked i { display: block; height: 100%; }
+.activity, .workload { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.activity li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 14px; }
+.activity li > span { overflow-wrap: anywhere; }
+.activity time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.workload li { display: grid; grid-template-columns: auto minmax(90px, 160px) minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 14px; }
+.workload .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workload .counts { font-size: 13px; color: var(--muted); white-space: nowrap; }
+
+/* ----- Documents ----- */
+.doc-section { display: grid; gap: 8px; }
+.doc-section h3 { font-size: 15px; }
+.files .empty-row { color: var(--muted); font-size: 14px; border-style: dashed; }
+.files li .link { white-space: nowrap; }
+
+/* ----- Subtasks ----- */
+.subtasks { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.subtasks li { display: flex; align-items: center; gap: 10px; }
+.sub-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 10px; font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.sub-open:hover { border-color: var(--ink); }
+.sub-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subtasks li.done .sub-title { text-decoration: line-through; color: var(--muted); }
+.sub-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.chev { font-size: 18px; line-height: 1; }
+.chip.doing { background: color-mix(in srgb, var(--doing) 18%, transparent); color: var(--doing); }
+#t-sub-progress { margin-bottom: 8px; }
+.crumb { justify-self: start; background: none; border: 0; padding: 0; font: 500 13px var(--font-body); color: var(--muted); cursor: pointer; }
+.crumb:hover { color: var(--ink); text-decoration: underline; }
+.sub-chip { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+dialog.drawer.is-subtask { border-left: 4px solid var(--accent); }
+.row-item .parent { display: block; color: var(--muted); font-size: 12px; }
+
+/* ----- Profile ----- */
+.profile { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; max-width: 900px; }
+.profile-card { grid-column: 1 / -1; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 18px; }
+.profile-card .error { grid-column: 1 / -1; }
+.profile-who { display: grid; gap: 2px; }
+.profile-who h3 { font-size: 22px; }
+.profile-who p { margin: 0; overflow-wrap: anywhere; }
+.photo-actions { display: grid; gap: 8px; justify-items: center; }
+.photo-actions label.btn { display: inline-block; color: var(--ink); font-size: 14px; }
+.stack-form label small { font-weight: 400; color: var(--muted); }
+.form-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+.form-foot .saved { margin-right: auto; }
+.form-foot .error { margin-right: auto; }
+.field .label-text { font-size: 13px; font-weight: 600; color: var(--muted); }
+#pf-kind-field { display: grid; gap: 6px; }
+#pf-kind-hint { font-size: 12px; }
+
+@media (max-width: 760px) {
+  .summary-grid, .profile { grid-template-columns: minmax(0, 1fr); }
+  .profile-card { grid-template-columns: auto minmax(0, 1fr); }
+  .photo-actions { grid-column: 1 / -1; justify-items: start; grid-auto-flow: column; justify-content: start; align-items: center; }
+  .workload li { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .workload .stacked { grid-column: 2 / -1; grid-row: 2; }
 }

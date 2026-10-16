@@ -12,21 +12,28 @@ Students juggle personal deadlines, several group projects and an FYP at the sam
 
 **Personal** is your own private list, for things like revising for a quiz or paying hostel fees.
 
-**Projects** are for group work. Each one has three columns (*To do*, *Doing*, *Done*) and a team:
+**Projects** are either **school** projects (a course, a group assignment, your FYP), which show the course code and semester week, or **personal** projects (a side project, a club, an event). Pin the ones that matter most and they stay at the top of the sidebar. Everyone in a project has a role:
 - **Leader**: sets up the project and adds people.
 - **Member**: adds tasks, picks them up and finishes them.
 - **Supervisor**: a lecturer or FYP supervisor who can see everything, comment and mark work as done, but can't change it.
 
-![A group project board](docs/project.png)
+Each project has three sections:
+- **Summary**: what the project is about and its goal (both editable), how many items are to do, doing and done, what's late, recent activity, and each person's workload.
+- **Tasks**: three columns (*To do*, *Doing*, *Done*). Drag cards between them.
+- **Documents**: files for the whole project, like the brief or the rubric, plus every file attached to its tasks.
+
+![A project summary](docs/summary.png)
 
 **Each task** opens in a side panel where you can:
 - set a due date, see which semester week it falls in, and star it as important
 - give it to someone in the group
-- break it into steps
+- break it into **subtasks**, each with its own status, owner and due date. A subtask opens in its own panel, with a link back to its task
 - attach files: PDF, Word, slides, Excel, images or ZIP, up to 10 MB each
 - discuss it with the group or your supervisor
 
 ![Task panel](docs/task-panel.png)
+
+**Your profile** has your photo, name, a short bio, your email and your password. Click your name at the bottom of the sidebar to open it.
 
 ## Made for Malaysian students
 
@@ -99,7 +106,7 @@ Your data is kept. If an update changes how the data is stored, TaskForge upgrad
 | `n` | Add a task |
 | `Esc` | Clear the search |
 
-Click your name at the bottom of the sidebar to change your name or password.
+Click your name at the bottom of the sidebar to open your profile.
 
 ### Settings
 
@@ -120,6 +127,7 @@ src/
   config.js        Where data is kept, demo mode
   db.js            Schema, upgrades, backups, transactions, personal lists
   backup.js        npm run backup
+  files.js         Upload checks and downloads
   auth.js          Password hashing, sessions, roles
   validate.js      Input validation helpers
   taskUtils.js     Creating tasks, Malaysian "today"
@@ -127,8 +135,9 @@ src/
   seed.js          Demo data
   routes/
     auth.js        Sign up, log in, log out
-    boards.js      Projects, team, contributions
-    tasks.js       My work, tasks, steps, files, comments
+    boards.js      Projects, summary, pins, documents, team, contributions
+    tasks.js       My work, search, tasks, subtasks, files, comments
+    users.js       Profile photos
 public/            The front end
 test/              API tests
 ```
@@ -136,12 +145,15 @@ test/              API tests
 ## Data model
 
 ```
-users ──< memberships >── boards ──< tasks ──< steps
-                                       ├────< attachments
-                                       └────< comments
+users ──< memberships >── boards ──< tasks ──< tasks (subtasks, via parent_id)
+  │                         │  │        ├────< attachments
+  └──< pins >───────────────┘  │        └────< comments
+                               ├──< documents
+                               └──< activity
 ```
 
-- A **board** is either a personal list (`personal = 1`, one per user, created at sign-up) or a project.
+- A **board** is either a personal list (`personal = 1`, one per user, created at sign-up) or a project. A project's `kind` is `school` or `personal`.
+- A **subtask** is a task whose `parent_id` points at another task on the same board. Subtasks only go one level deep.
 - `memberships.role` is `owner` (leader), `member` or `supervisor`. A project always keeps at least one leader.
 - Tasks on a personal list always belong to its owner. Project tasks can be given to any leader or member.
 - `tasks.completed_at` is set when a task is finished, which powers "Done recently" and the on-time count.
@@ -151,21 +163,29 @@ users ──< memberships >── boards ──< tasks ──< steps
 | Method | Path | Who | What |
 |---|---|---|---|
 | POST | `/api/auth/register`, `/login`, `/logout` | anyone | Accounts and sessions |
-| GET / PATCH | `/api/auth/me` | signed in | Current user, change name |
+| GET / PATCH | `/api/auth/me` | signed in | Current user, change name and bio |
+| POST | `/api/auth/email` | signed in | Change email (needs your password) |
+| PUT / DELETE | `/api/me/avatar` | signed in | Upload (raw PNG, JPG, GIF or WebP, up to 2 MB) or remove your photo |
+| GET | `/api/users/:id/avatar` | signed in | Someone's photo |
 | POST | `/api/auth/password` | signed in | Change password (signs out other browsers) |
 | GET | `/api/search?q=` | signed in | Tasks in my personal list and projects matching a name or notes |
 | GET | `/api/me/tasks` | signed in | My work: my open tasks everywhere, plus ones finished in the last day |
 | GET | `/api/boards` | signed in | My personal list and projects |
 | POST | `/api/boards` | signed in | Create a project, optionally from a template |
 | GET | `/api/boards/:id` | anyone in it | The project, its team and tasks |
-| PATCH / DELETE | `/api/boards/:id` | leader | Change settings or delete |
+| GET | `/api/boards/:id/summary` | anyone in it | Status counts, recent activity and workload |
+| PATCH | `/api/boards/:id` | leader; members may change `description`, `goal` and `goal_date` | Change the project |
+| DELETE | `/api/boards/:id` | leader | Delete the project and its files |
+| PUT / DELETE | `/api/boards/:id/pin` | anyone in it | Pin or unpin it for yourself |
+| GET / POST | `/api/boards/:id/documents` | anyone in it / leader or member | List or add project documents |
+| GET / DELETE | `/api/documents/:id` | anyone in it / uploader or leader | Download or delete a document |
 | POST / PATCH / DELETE | `/api/boards/:id/members[/:userId]` | leader (or yourself, to leave) | Manage the team |
 | GET | `/api/boards/:id/contributions` | anyone in it | Contributions report |
 | POST | `/api/boards/:id/tasks` | leader or member | Add a task |
-| GET | `/api/tasks/:id` | anyone in the project | Task with steps, files and comments |
+| GET | `/api/tasks/:id` | anyone in the project | Task with subtasks, files and comments |
 | PATCH | `/api/tasks/:id` | leader or member; supervisors may change `status` only | Update a task |
 | DELETE | `/api/tasks/:id` | leader or member | Delete a task |
-| POST | `/api/tasks/:id/steps` · PATCH/DELETE `/api/steps/:id` | leader or member | Steps |
+| POST | `/api/tasks/:id/subtasks` | leader or member | Add a subtask (then use the task routes on it) |
 | POST | `/api/tasks/:id/attachments` | leader or member | Upload: raw file body, name in the `X-Filename` header |
 | GET / DELETE | `/api/attachments/:id` | anyone in it / uploader or leader | Download or delete a file |
 | POST | `/api/tasks/:id/comments` · DELETE `/api/comments/:id` | anyone in the project | Discussion |

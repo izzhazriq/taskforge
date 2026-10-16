@@ -114,14 +114,29 @@ test('supervisors comment and change status, but cannot edit or add', async () =
   assert.equal((await supervisor('/me/tasks')).data.tasks.length, 0);
 });
 
-test('steps can be added, ticked and removed', async () => {
-  const s = await member(`/tasks/${task.id}/steps`, { method: 'POST', body: { text: 'Find 5 references' } });
-  assert.equal(s.status, 201);
-  assert.equal((await member(`/steps/${s.data.step.id}`, { method: 'PATCH', body: { done: true } })).data.step.done, 1);
-  assert.equal((await supervisor(`/steps/${s.data.step.id}`, { method: 'PATCH', body: { done: false } })).status, 403);
+test('subtasks have their own status, owner and due date, one level deep', async () => {
+  const sub = await member(`/tasks/${task.id}/subtasks`, { method: 'POST', body: { title: 'Find 5 references', assigneeId: ids['leader@x.dev'], dueDate: day(1) } });
+  assert.equal(sub.status, 201);
+  assert.equal(sub.data.task.parent_id, task.id);
+  assert.equal(sub.data.task.parent_title, 'Write my part');
+  ids.subtask = sub.data.task.id;
+
+  const done = await leader(`/tasks/${ids.subtask}`, { method: 'PATCH', body: { status: 'done' } });
+  assert.equal(done.data.task.status, 'done');
+  assert.equal((await supervisor(`/tasks/${ids.subtask}`, { method: 'PATCH', body: { title: 'x' } })).status, 403);
+  assert.equal((await member(`/tasks/${ids.subtask}/subtasks`, { method: 'POST', body: { title: 'Too deep' } })).status, 400);
+  assert.equal((await supervisor(`/tasks/${task.id}/subtasks`, { method: 'POST', body: { title: 'Nope' } })).status, 403);
+
   const { data } = await member(`/tasks/${task.id}`);
-  assert.equal(data.task.steps.length, 1);
+  assert.deepEqual(data.task.subtasks.map((t) => t.title), ['Find 5 references']);
+  assert.equal(data.task.subtask_count, 1);
+  assert.equal(data.task.subtasks_done, 1);
   assert.equal(data.task.comments[0].body, 'Good work.');
+
+  const board = await leader(`/boards/${projectId}`);
+  assert.ok(!board.data.tasks.some((t) => t.id === ids.subtask), 'subtasks are not cards on the board');
+  const mine = await leader('/me/tasks');
+  assert.ok(mine.data.tasks.some((t) => t.id === ids.subtask && t.parent_title === 'Write my part'), 'subtasks show in My work');
 });
 
 test('files upload, download and enforce type and permissions', async () => {
@@ -143,6 +158,17 @@ test('files upload, download and enforce type and permissions', async () => {
 
   assert.equal((await member(`/attachments/${up.data.attachment.id}`, { method: 'DELETE' })).status, 204);
   assert.equal(fs.readdirSync(uploadDir).length, 0, 'deleting a file removes it from disk');
+
+  // Deleting a task removes its subtasks and their files.
+  const parent = (await member(`/boards/${projectId}/tasks`, { method: 'POST', body: { title: 'Scratch' } })).data.task;
+  const child = (await member(`/tasks/${parent.id}/subtasks`, { method: 'POST', body: { title: 'Scratch part' } })).data.task;
+  await member(`/tasks/${child.id}/attachments`, {
+    method: 'POST', raw: pdf, headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': 'part.pdf' },
+  });
+  assert.equal(fs.readdirSync(uploadDir).length, 1);
+  assert.equal((await member(`/tasks/${parent.id}`, { method: 'DELETE' })).status, 204);
+  assert.equal((await member(`/tasks/${child.id}`)).status, 404);
+  assert.equal(fs.readdirSync(uploadDir).length, 0);
 });
 
 test('contribution report counts each person’s work', async () => {
@@ -190,4 +216,108 @@ test('people can rename themselves and change their password', async () => {
   assert.equal((await otherBrowser('/auth/me')).status, 401, 'other browsers are signed out');
   const relogin = await client()('/auth/login', { method: 'POST', body: { email: 'member@x.dev', password: 'new-password-1' } });
   assert.equal(relogin.status, 200);
+});
+
+test('projects are school or personal; personal ones have no course or week', async () => {
+  const res = await leader('/boards', { method: 'POST', body: { name: 'Badminton club', kind: 'personal', course_code: 'CSC1', sem_start: '2026-10-05' } });
+  assert.equal(res.status, 201);
+  ids.club = res.data.board.id;
+  assert.equal(res.data.board.kind, 'personal');
+  assert.equal(res.data.board.course_code, '');
+  assert.equal(res.data.board.sem_start, null);
+  assert.equal((await leader('/boards', { method: 'POST', body: { name: 'X', kind: 'personal', template: 'fyp' } })).status, 400);
+  assert.equal((await leader('/boards', { method: 'POST', body: { name: 'X', kind: 'work' } })).status, 400);
+  const changed = await leader(`/boards/${ids.club}`, { method: 'PATCH', body: { kind: 'school', course_code: 'sukan 1' } });
+  assert.equal(changed.data.board.kind, 'school');
+  assert.equal(changed.data.board.course_code, 'SUKAN1');
+  assert.equal(changed.data.board.name, 'Badminton club', 'unchanged settings are kept');
+});
+
+test('everyone pins their own projects', async () => {
+  assert.equal((await member(`/boards/${projectId}/pin`, { method: 'PUT' })).status, 204);
+  assert.equal((await member(`/boards/${projectId}/pin`, { method: 'PUT' })).status, 204, 'pinning twice is fine');
+  const mine = (await member('/boards')).data.boards.find((b) => b.id === projectId);
+  assert.equal(mine.pinned, 1);
+  assert.equal((await leader('/boards')).data.boards.find((b) => b.id === projectId).pinned, 0, 'pins are per person');
+  assert.equal((await stranger(`/boards/${projectId}/pin`, { method: 'PUT' })).status, 404);
+  assert.equal((await leader(`/boards/${personalId}/pin`, { method: 'PUT' })).status, 400);
+  assert.equal((await member(`/boards/${projectId}/pin`, { method: 'DELETE' })).status, 204);
+  assert.equal((await member('/boards')).data.boards.find((b) => b.id === projectId).pinned, 0);
+});
+
+test('the summary shows the description, goal, progress, activity and workload', async () => {
+  assert.equal((await member(`/boards/${projectId}`, { method: 'PATCH', body: { description: 'Hostel system database', goal: 'Get an A', goal_date: day(30) } })).status, 200);
+  assert.equal((await member(`/boards/${projectId}`, { method: 'PATCH', body: { name: 'Renamed' } })).status, 403, 'only leaders change settings');
+  assert.equal((await supervisor(`/boards/${projectId}`, { method: 'PATCH', body: { goal: 'x' } })).status, 403);
+
+  const board = (await leader(`/boards/${projectId}`)).data.board;
+  assert.equal(board.description, 'Hostel system database');
+  assert.equal(board.goal, 'Get an A');
+
+  const { data } = await supervisor(`/boards/${projectId}/summary`);
+  const total = data.status.todo + data.status.doing + data.status.done;
+  assert.equal(total, (await leader(`/boards/${projectId}`)).data.tasks.length + data.status.subtasks);
+  assert.ok(data.activity.some((a) => a.detail === 'set the goal to "Get an A"'));
+  assert.ok(data.activity.every((a) => a.user_name));
+  assert.deepEqual(data.workload.map((w) => w.name).sort(), ['Lina', 'Musa Ali']);
+  assert.ok(!data.workload.some((w) => w.role === 'supervisor'));
+  assert.equal(typeof data.unassigned, 'number');
+});
+
+test('documents belong to the project and list task files too', async () => {
+  const send = (c, name) => c(`/boards/${projectId}/documents`, {
+    method: 'POST', raw: Buffer.from('rubric'), headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': name },
+  });
+  const up = await send(member, 'Rubric.pdf');
+  assert.equal(up.status, 201);
+  assert.equal((await send(supervisor, 'a.pdf')).status, 403);
+  assert.equal((await send(member, 'run.exe')).status, 400);
+
+  const list = await supervisor(`/boards/${projectId}/documents`);
+  assert.deepEqual(list.data.documents.map((d) => d.filename), ['Rubric.pdf']);
+  assert.ok(Array.isArray(list.data.taskFiles));
+  const down = await supervisor(`/documents/${up.data.document.id}`);
+  assert.equal(down.status, 200);
+  assert.match(down.headers.get('content-disposition'), /attachment/);
+  assert.equal((await stranger(`/documents/${up.data.document.id}`)).status, 404);
+  assert.equal((await leader(`/boards/${projectId}/contributions`)).data.contributions.find((c) => c.name === 'Musa Ali' || c.name === 'Musa').files, 1);
+
+  // Deleting a project removes its files from disk.
+  const tmp = (await leader('/boards', { method: 'POST', body: { name: 'Temp' } })).data.board;
+  await leader(`/boards/${tmp.id}/documents`, { method: 'POST', raw: Buffer.from('x'), headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': 'x.txt' } });
+  const before = fs.readdirSync(uploadDir).length;
+  assert.equal((await leader(`/boards/${tmp.id}`, { method: 'DELETE' })).status, 204);
+  assert.equal(fs.readdirSync(uploadDir).length, before - 1);
+});
+
+test('profiles have a photo, a bio and an email you can change', async () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+  const put = (c, body) => c('/me/avatar', { method: 'PUT', raw: body, headers: { 'Content-Type': 'application/octet-stream' } });
+  assert.equal((await put(leader, Buffer.from('<svg onload=alert(1)></svg>  '))).status, 400, 'only real images');
+  const first = await put(leader, png);
+  assert.equal(first.status, 200);
+  assert.match(first.data.avatar_url, /^\/api\/users\/\d+\/avatar\?v=/);
+  const second = await put(leader, png);
+  assert.notEqual(second.data.avatar_url, first.data.avatar_url, 'a new photo gets a new address');
+  const img = await stranger(second.data.avatar_url.replace('/api', ''));
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get('content-type'), 'image/png');
+  assert.equal((await client()(second.data.avatar_url.replace('/api', ''))).status, 401, 'only signed-in people see photos');
+  const members = (await member(`/boards/${projectId}`)).data.members;
+  assert.equal(members.find((m) => m.name === 'Lina').avatar_url, second.data.avatar_url);
+  assert.equal((await leader('/auth/me')).data.user.avatar_url, second.data.avatar_url);
+
+  assert.equal((await leader('/auth/me', { method: 'PATCH', body: { bio: 'Group leader, CSC584' } })).data.user.bio, 'Group leader, CSC584');
+  assert.equal((await leader('/auth/me')).data.user.name, 'Lina', 'changing the bio keeps the name');
+
+  assert.equal((await leader('/auth/email', { method: 'POST', body: { email: 'new@x.dev', password: 'wrong' } })).status, 400);
+  assert.equal((await leader('/auth/email', { method: 'POST', body: { email: 'member@x.dev', password: 'password123' } })).status, 409);
+  assert.equal((await leader('/auth/email', { method: 'POST', body: { email: 'Lina@New.dev', password: 'password123' } })).data.user.email, 'lina@new.dev');
+  assert.equal((await client()('/auth/login', { method: 'POST', body: { email: 'lina@new.dev', password: 'password123' } })).status, 200);
+
+  const avatars = () => fs.readdirSync(uploadDir).filter((f) => f.startsWith('avatar-')).length;
+  assert.equal(avatars(), 1, 'the old photo is removed');
+  assert.equal((await leader('/me/avatar', { method: 'DELETE' })).status, 204);
+  assert.equal(avatars(), 0);
+  assert.equal((await leader('/auth/me')).data.user.avatar_url, null);
 });

@@ -5,6 +5,11 @@ const SESSION_DAYS = 30;
 const ROLE_RANK = { supervisor: 1, member: 2, owner: 3 };
 export const ROLE_LABEL = { owner: 'group leader', member: 'team member', supervisor: 'supervisor' };
 
+// SQL for a user's profile photo URL, or NULL. The ?v= part changes with each new photo,
+// so browsers don't keep showing an old one from their cache.
+export const avatarSql = (alias) =>
+  `CASE WHEN ${alias}.avatar IS NULL THEN NULL ELSE '/api/users/' || ${alias}.id || '/avatar?v=' || substr(${alias}.avatar, 8, 8) END`;
+
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);
@@ -56,7 +61,7 @@ function readCookie(req, name) {
 
 export function requireUser(db) {
   const findSession = db.prepare(`
-    SELECT u.id, u.email, u.name FROM sessions s
+    SELECT u.id, u.email, u.name, u.bio, ${avatarSql('u')} AS avatar_url FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > datetime('now')`);
   return (req, res, next) => {
