@@ -11,15 +11,16 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 
 const state = {
   me: null,
+  space: 'school', // School and Personal each have their own projects, My work and colour
   boards: [],
-  view: { kind: 'mywork' }, // or { kind: 'board', id }, { kind: 'search', q } or { kind: 'profile' }
+  view: { kind: 'mywork' }, // or { kind: 'board', id }, { kind: 'search', q }, { kind: 'profile' } or { kind: 'supervising' }
   board: null, members: [], tasks: [], // the open board
   myTasks: [],
   task: null, // the task open in the side panel
   onlyMine: false,
   showAllDone: false,
 };
-const TABS = ['summary', 'tasks', 'documents'];
+const TABS = ['summary', 'tasks', 'documents', 'github'];
 const DONE_SHOWN = 10; // the Done column shows the most recent ones until you ask for more
 
 // ---------- Helpers ----------
@@ -68,6 +69,29 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 
+// Small line icons (24px grid, drawn with the text colour).
+const ICONS = {
+  briefcase: 'M4 8h16v11H4zM9 8V5h6v3M4 13h16',
+  building: 'M5 21V4h10v17M15 9h4v12M8 8h2M8 12h2M8 16h2M3 21h18',
+  org: 'M12 3 3 8h18zM5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18',
+  pin: 'M12 21s-6-5.6-6-11a6 6 0 0 1 12 0c0 5.4-6 11-6 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  cap: 'M2 9l10-5 10 5-10 5zM6 11v5c3 2 9 2 12 0v-5',
+  note: 'M5 4h10l4 4v12H5zM14 4v5h5M8 13h8M8 17h5',
+  mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5',
+  calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+};
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+
 const initials = (name) => name.split(/\s+/).filter((p) => /[A-Za-z]/.test(p[0])).map((p) => p[0]).join('').slice(0, 2).toUpperCase();
 // A person's photo, or their initials when they haven't added one.
 function avatar(person, cls = 'avatar') {
@@ -77,8 +101,10 @@ function avatar(person, cls = 'avatar') {
     ? h('img', { class: `${cls} photo`, src: url, alt: '', title: name })
     : h('span', { class: cls, title: name }, initials(name) || '?');
 }
+// Times come from the database as "2026-10-16 08:00:00" (UTC) or from GitHub as ISO strings.
+const parseTime = (s) => Date.parse(s.includes('T') ? s : `${s.replace(' ', 'T')}Z`);
 const ago = (s) => {
-  const mins = Math.round((Date.now() - Date.parse(s.replace(' ', 'T') + 'Z')) / 60000);
+  const mins = Math.round((Date.now() - parseTime(s)) / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} min ago`;
   if (mins < 24 * 60) return `${Math.round(mins / 60)} h ago`;
@@ -88,9 +114,11 @@ const today = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in the
 const daysUntil = (date) => Math.round((Date.parse(date) - Date.parse(today())) / 86400000);
 const shortDate = (date) => new Date(date + 'T00:00').toLocaleDateString('en-MY', { weekday: 'short', day: 'numeric', month: 'short' });
 const fmtSize = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
-const fmtTime = (s) => new Date(s.replace(' ', 'T') + 'Z').toLocaleString('en-MY', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+const fmtTime = (s) => new Date(parseTime(s)).toLocaleString('en-MY', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 const personalBoard = () => state.boards.find((b) => b.personal);
 const canWork = (role) => role === 'owner' || role === 'member';
+// Personal projects have an owner and collaborators; school projects a leader, members and supervisors.
+const roleName = (role, kind) => (kind === 'personal' ? { owner: 'Owner', member: 'Collaborator' }[role] : null) ?? ROLE_NAME[role];
 
 function dueText(date, status) {
   if (!date) return '';
@@ -118,6 +146,48 @@ function weekOf(date, semStart) {
 function localGet(key) { try { return localStorage.getItem(key); } catch { return null; } }
 function localSet(key, value) { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } }
 
+// ---------- Light and dark ----------
+// No choice follows the computer. theme.js applies a saved choice before the page draws.
+const themeChoice = () => { const t = localGet('tf-theme'); return t === 'light' || t === 'dark' ? t : 'system'; };
+const isDark = () => document.documentElement.dataset.theme === 'dark'
+  || (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+function setTheme(choice) {
+  if (choice === 'system') { try { localStorage.removeItem('tf-theme'); } catch { /* storage unavailable */ } delete document.documentElement.dataset.theme; }
+  else { localSet('tf-theme', choice); document.documentElement.dataset.theme = choice; }
+  renderThemeControls();
+}
+function renderThemeControls() {
+  const dark = isDark();
+  for (const b of document.querySelectorAll('[data-theme-toggle]')) {
+    b.textContent = dark ? '☀' : '☾';
+    b.title = b.ariaLabel = dark ? 'Switch to light mode' : 'Switch to dark mode';
+  }
+  for (const b of document.querySelectorAll('[data-theme-choice]')) b.setAttribute('aria-checked', b.dataset.themeChoice === themeChoice());
+}
+for (const b of document.querySelectorAll('[data-theme-toggle]')) b.onclick = () => setTheme(isDark() ? 'light' : 'dark');
+for (const b of document.querySelectorAll('[data-theme-choice]')) b.onclick = () => setTheme(b.dataset.themeChoice);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderThemeControls);
+renderThemeControls();
+
+// ---------- Account types ----------
+const ACCOUNT_TYPES = {
+  student: { label: 'Student', blurb: 'School projects, group work and your FYP, plus personal projects.' },
+  personal: { label: 'Personal', blurb: 'Side projects, work and life. No school projects.' },
+  supervisor: { label: 'Supervisor', blurb: 'Lecturers and FYP supervisors. Follow and comment on students’ projects.' },
+};
+// Each picker is a set of radio cards. Returns a function that reads the chosen type.
+function typePicker(container, chosen = 'student') {
+  const name = `type-${Math.random().toString(36).slice(2, 8)}`;
+  container.replaceChildren(...Object.entries(ACCOUNT_TYPES).map(([key, t]) => h('label', { class: 'type-card' },
+    h('input', { type: 'radio', name, value: key, checked: key === chosen }),
+    h('span', { class: 'type-name' }, t.label),
+    h('small', {}, t.blurb))));
+  return () => container.querySelector('input:checked')?.value;
+}
+const pickers = [...document.querySelectorAll('[data-type-picker]')];
+let readSignupType = typePicker(pickers[0]);
+let readGoogleType = typePicker(pickers[1]);
+
 // ---------- Auth ----------
 let authMode = 'login';
 function setAuthMode(mode) {
@@ -125,6 +195,7 @@ function setAuthMode(mode) {
   $('tab-login').setAttribute('aria-selected', mode === 'login');
   $('tab-register').setAttribute('aria-selected', mode === 'register');
   $('name-field').hidden = mode === 'login';
+  $('type-field').hidden = mode === 'login';
   $('auth-submit').textContent = mode === 'login' ? 'Log in' : 'Create account';
   $('auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
   $('auth-error').textContent = '';
@@ -135,7 +206,7 @@ $('auth-form').onsubmit = async (e) => {
   e.preventDefault();
   try {
     const body = { email: $('auth-email').value, password: $('auth-password').value };
-    if (authMode === 'register') body.name = $('auth-name').value;
+    if (authMode === 'register') Object.assign(body, { name: $('auth-name').value, accountType: readSignupType() });
     ({ user: state.me } = await api(`/auth/${authMode}`, { method: 'POST', body }));
     await enterApp();
   } catch (err) {
@@ -152,44 +223,129 @@ function showAuth() {
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
   $('app-view').hidden = true;
   $('auth-view').hidden = false;
+  $('auth-main').hidden = false;
+  $('google-form').hidden = true;
   setAuthMode('login');
-  api('/auth/info').then(({ demo }) => { $('demo-hint').hidden = !demo; }, () => {});
+  api('/auth/info').then(({ demo, google }) => {
+    $('demo-hint').hidden = !demo;
+    $('google-btn').hidden = $('google-or').hidden = !google;
+  }, () => {});
+
+  // Coming back from Google: an error to show, or a new person who still has to pick an account type.
+  const params = new URLSearchParams(location.search);
+  if (params.has('auth_error')) $('auth-error').textContent = params.get('auth_error');
+  if (params.get('signup') === 'google') {
+    api('/auth/google/pending').then(({ name, email }) => {
+      $('auth-main').hidden = true;
+      $('google-form').hidden = false;
+      $('g-name').textContent = name;
+      $('g-email').textContent = email;
+    }, (err) => { $('auth-error').textContent = err.message; });
+  }
+  if (params.size) history.replaceState(null, '', '/');
 }
+$('google-form').onsubmit = async (e) => {
+  e.preventDefault();
+  $('g-error').textContent = '';
+  try {
+    ({ user: state.me } = await api('/auth/google/complete', { method: 'POST', body: { accountType: readGoogleType() } }));
+    await enterApp();
+  } catch (err) { $('g-error').textContent = err.message; }
+};
 
 async function enterApp() {
+  if (location.search) history.replaceState(null, '', '/');
   $('auth-view').hidden = true;
   $('app-view').hidden = false;
   renderMe();
   $('search-input').value = '';
+  setSpace(fixedSpace() ?? (localGet('tf-space') === 'personal' ? 'personal' : 'school'), { quiet: true });
   await loadBoards();
   const saved = localGet('tf-view');
   const id = Number(saved);
   if (saved && saved !== 'mywork' && state.boards.some((b) => b.id === id)) await showBoard(id);
-  else await showMyWork();
+  else await showHome();
 }
+
+// ---------- Spaces: School and Personal ----------
+// Students switch between the two. Personal accounts only have Personal; supervisors only School.
+const isSupervisor = () => state.me?.account_type === 'supervisor';
+const fixedSpace = () => ({ personal: 'personal', supervisor: 'school' })[state.me?.account_type] ?? null;
+const inSpace = (b, space = state.space) => (b.kind || 'school') === space;
+const SPACE_INFO = {
+  school: { home: 'My work', newProject: '+ New school project', empty: 'No school projects yet. Make one for each course, group assignment or your FYP.' },
+  personal: { home: 'My work', newProject: '+ New personal project', empty: 'No personal projects yet. Make one for a side project, a club or a trip.' },
+};
+function setSpace(space, { quiet = false } = {}) {
+  state.space = space;
+  if (!fixedSpace()) localSet('tf-space', space);
+  document.body.dataset.space = space;
+  for (const b of document.querySelectorAll('#space-switch button')) b.setAttribute('aria-selected', b.dataset.space === space);
+  $('space-switch').hidden = Boolean(fixedSpace());
+  $('space-tag').hidden = !fixedSpace();
+  $('space-tag').textContent = isSupervisor() ? 'Supervisor' : 'Personal';
+  if (!quiet) { loadBoards(); showHome(); }
+}
+for (const b of document.querySelectorAll('#space-switch button')) b.onclick = () => { if (b.dataset.space !== state.space) setSpace(b.dataset.space); };
+const showHome = () => (isSupervisor() ? showSupervising() : showMyWork());
 
 function renderMe() {
   $('me-name').textContent = state.me.name;
   $('me-avatar').replaceChildren(avatar(state.me));
 }
 
+// ---------- Supervisors' home: the projects they look after ----------
+async function showSupervising() {
+  state.view = { kind: 'supervising' };
+  localSet('tf-view', 'mywork');
+  await loadBoards();
+  showView('supervising');
+  markNav();
+  const projects = state.boards.filter((b) => !b.personal);
+  $('supervising-list').replaceChildren(...(projects.length ? projects.map((b) => {
+    const total = b.open_tasks + b.done_tasks;
+    const pct = total ? Math.round((b.done_tasks / total) * 100) : 0;
+    return h('li', {}, h('button', { class: 'project-card box', onclick: () => showBoard(b.id) },
+      h('span', { class: 'sub' }, b.course_code || 'School project'),
+      h('span', { class: 'pc-name' }, b.name),
+      h('span', { class: 'progress' }, h('i', { style: `width:${pct}%` })),
+      h('span', { class: 'pc-meta' }, `${pct}% done · ${b.people} student${b.people === 1 ? '' : 's'}`,
+        b.late_tasks ? h('span', { class: 'due late' }, ` · ${b.late_tasks} late`) : '')));
+  }) : [h('li', { class: 'empty-note' }, 'No projects yet. When a student adds you as their supervisor, their project shows up here.')]));
+}
+
 // ---------- Navigation ----------
 async function loadBoards() {
   ({ boards: state.boards } = await api('/boards'));
-  const projects = state.boards.filter((b) => !b.personal);
+  const projects = state.boards.filter((b) => !b.personal && inSpace(b));
   const item = (b) => h('button', { class: 'nav-item', 'data-board': b.id, onclick: () => showBoard(b.id) },
     h('span', { class: 'name' }, b.name),
-    h('small', {}, b.kind === 'personal' ? 'Personal' : b.course_code || 'School'));
+    b.course_code ? h('small', {}, b.course_code) : b.late_tasks ? h('small', { class: 'due late' }, `${b.late_tasks} late`) : '');
   const pinned = projects.filter((b) => b.pinned);
   $('pinned-label').hidden = !pinned.length;
   $('pinned-list').replaceChildren(...pinned.map(item));
   $('project-list').replaceChildren(...projects.filter((b) => !b.pinned).map(item));
+  $('projects-label').textContent = isSupervisor() ? 'Supervising' : state.space === 'school' ? 'School projects' : 'Personal projects';
+  $('projects-empty').hidden = projects.length > 0 || isSupervisor();
+  $('projects-empty').textContent = SPACE_INFO[state.space].empty;
+  $('new-project').hidden = isSupervisor();
+  $('new-project').textContent = SPACE_INFO[state.space].newProject;
+  // The private to-do list sits in the Personal space. Supervisors only supervise.
+  $('nav-personal').hidden = state.space !== 'personal';
+  $('nav-mywork').querySelector('span').textContent = isSupervisor() ? 'Overview' : SPACE_INFO[state.space].home;
+  // Each space tab shows how many of its tasks are late or due today.
+  for (const space of ['school', 'personal']) {
+    const urgent = state.boards.filter((b) => inSpace(b, space)).reduce((n, b) => n + (b.my_urgent || 0), 0);
+    const badge = document.querySelector(`[data-space-badge="${space}"]`);
+    badge.hidden = !urgent || space === state.space;
+    badge.textContent = urgent;
+  }
   markNav();
 }
 
 function markNav() {
   const v = state.view;
-  $('nav-mywork').setAttribute('aria-current', v.kind === 'mywork');
+  $('nav-mywork').setAttribute('aria-current', v.kind === 'mywork' || v.kind === 'supervising');
   $('nav-personal').setAttribute('aria-current', v.kind === 'board' && v.id === personalBoard()?.id);
   $('nav-profile').setAttribute('aria-current', v.kind === 'profile');
   for (const el of document.querySelectorAll('#project-list .nav-item, #pinned-list .nav-item')) {
@@ -197,22 +353,22 @@ function markNav() {
   }
 }
 
-$('nav-mywork').onclick = () => showMyWork();
+$('nav-mywork').onclick = () => showHome();
 $('nav-personal').onclick = () => showBoard(personalBoard().id);
 
 function showView(name) {
-  for (const v of ['mywork', 'board', 'search', 'profile']) $(`${v}-view`).hidden = v !== name;
+  for (const v of ['mywork', 'supervising', 'board', 'search', 'profile']) $(`${v}-view`).hidden = v !== name;
 }
 
 async function refresh() {
   if (!state.me) return;
   await loadBoards();
   const v = state.view;
-  if (v.kind === 'mywork') await showMyWork();
+  if (v.kind === 'mywork' || v.kind === 'supervising') await showHome();
   else if (v.kind === 'search') await showSearch(v.q);
   else if (v.kind === 'profile') showProfile();
   else if (state.boards.some((b) => b.id === v.id)) await showBoard(v.id);
-  else await showMyWork(); // the project was deleted or you were removed from it
+  else await showHome(); // the project was deleted or you were removed from it
 }
 
 // ---------- Search ----------
@@ -233,10 +389,10 @@ let searchTimer;
 $('search-input').oninput = (e) => {
   clearTimeout(searchTimer);
   const q = e.target.value.trim();
-  searchTimer = setTimeout(() => (q ? showSearch(q) : state.view.kind === 'search' && showMyWork()), 200);
+  searchTimer = setTimeout(() => (q ? showSearch(q) : state.view.kind === 'search' && showHome()), 200);
 };
 $('search-form').onsubmit = (e) => { e.preventDefault(); clearTimeout(searchTimer); const q = $('search-input').value.trim(); if (q) showSearch(q); };
-$('search-input').onkeydown = (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); if (state.view.kind === 'search') showMyWork(); } };
+$('search-input').onkeydown = (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); if (state.view.kind === 'search') showHome(); } };
 
 // Keyboard: "/" searches, "n" adds a task.
 document.addEventListener('keydown', (e) => {
@@ -246,12 +402,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'n') {
     e.preventDefault();
     if (state.view.kind === 'board') { setTab('tasks'); document.querySelector('.column[data-status="todo"] .add-task input')?.focus(); }
-    else showMyWork().then(() => $('qa-title').focus());
+    else if (!isSupervisor()) showMyWork().then(() => $('qa-title').focus());
   }
 });
 
 // ---------- My work ----------
 async function showMyWork() {
+  if (isSupervisor()) return showSupervising();
   state.view = { kind: 'mywork' };
   localSet('tf-view', 'mywork');
   ({ tasks: state.myTasks } = await api('/me/tasks'));
@@ -262,19 +419,25 @@ async function showMyWork() {
 }
 
 function renderMyWork() {
-  const week = weekOf(today(), personalBoard()?.sem_start);
+  const school = state.space === 'school';
+  const week = school ? weekOf(today(), personalBoard()?.sem_start) : null;
   $('today-line').replaceChildren(
+    school ? 'School · ' : 'Personal · ',
     new Date().toLocaleDateString('en-MY', { weekday: 'long', day: 'numeric', month: 'long' }),
     week ? ' · ' : '', week ? h('b', {}, `Week ${week}`) : '');
 
-  // Quick add: personal list or any project I work on
+  // Quick add: the projects in this space I work on, plus my own to-do list in the Personal space
   const where = $('qa-where');
   const keep = where.value;
-  where.replaceChildren(...state.boards.filter((b) => canWork(b.role)).map((b) =>
-    h('option', { value: b.id }, b.personal ? 'Personal' : (b.course_code ? `${b.course_code} · ${b.name}` : b.name))));
+  const targets = state.boards.filter((b) => canWork(b.role) && inSpace(b));
+  where.replaceChildren(...targets.map((b) =>
+    h('option', { value: b.id }, b.personal ? 'My to-dos' : (b.course_code ? `${b.course_code} · ${b.name}` : b.name))));
   if (keep && [...where.options].some((o) => o.value === keep)) where.value = keep;
+  $('quick-add').hidden = !targets.length;
+  $('qa-title').placeholder = school ? 'Add a task, like “Submit lab report”' : 'Add a task, like “Fix the checkout page”';
 
-  const open = state.myTasks.filter((t) => t.status !== 'done');
+  const mine = state.myTasks.filter((t) => inSpace(t));
+  const open = mine.filter((t) => t.status !== 'done');
   const groups = [
     { key: 'late', title: 'Late', test: (t) => t.due_date && daysUntil(t.due_date) < 0 },
     { key: 'today', title: 'Today', test: (t) => t.due_date && daysUntil(t.due_date) === 0 },
@@ -289,7 +452,7 @@ function renderMyWork() {
     items.forEach((t) => placed.add(t.id));
     return { ...g, items };
   });
-  const done = state.myTasks.filter((t) => t.status === 'done');
+  const done = mine.filter((t) => t.status === 'done');
   if (done.length) sections.push({ key: 'done', title: 'Done recently', items: done });
 
   const urgent = sections.filter((s) => s.key === 'late' || s.key === 'today').reduce((n, s) => n + s.items.length, 0);
@@ -300,7 +463,9 @@ function renderMyWork() {
   $('mywork-groups').replaceChildren(...(shown.length ? shown.map((s) => h('section', { class: `group ${s.key}` },
     h('h3', {}, s.title, h('span', { class: 'muted' }, String(s.items.length))),
     h('ul', { class: 'rows' }, s.items.map(renderRow))))
-    : [h('p', { class: 'empty-note' }, 'Nothing on your plate. Add a task above, or open a project to pick something up.')]));
+    : [h('p', { class: 'empty-note' }, targets.length
+        ? 'Nothing on your plate here. Add a task above, or open a project to pick something up.'
+        : school ? 'Make a school project to get started, using “+ New school project” in the sidebar.' : 'Nothing here yet.')]));
 }
 
 function renderRow(t, { showBoard = false } = {}) {
@@ -315,7 +480,7 @@ function renderRow(t, { showBoard = false } = {}) {
     h('span', { class: 'meta' },
       t.subtask_count ? h('span', {}, `${t.subtasks_done}/${t.subtask_count} subtasks`) : '',
       t.file_count ? h('span', {}, `${t.file_count} file${t.file_count > 1 ? 's' : ''}`) : '',
-      (!t.personal || showBoard) && h('span', { class: 'chip' }, t.personal ? 'Personal' : t.course_code || t.board_name),
+      (!t.personal || showBoard) && h('span', { class: `chip space-${t.kind || 'school'}` }, t.personal ? 'My to-dos' : t.course_code || t.board_name),
       t.due_date && h('span', { class: dueClass(t.due_date, t.status) }, dueText(t.due_date, t.status))));
 }
 
@@ -348,6 +513,8 @@ async function showBoard(id) {
   const data = await api(`/boards/${id}`);
   if (state.view.kind !== 'board' || state.view.id !== id) return;
   Object.assign(state, { board: data.board, members: data.members, tasks: data.tasks });
+  // Opening a project from the other space (from search, say) moves you to that space.
+  if (!inSpace(data.board) && !fixedSpace()) { setSpace(data.board.kind, { quiet: true }); loadBoards(); }
   showView('board');
   markNav();
   renderBoard();
@@ -355,7 +522,10 @@ async function showBoard(id) {
 }
 
 // Each project remembers which section you last looked at. New projects open on the Summary.
-const tabOf = (id) => { const t = localGet(`tf-tab-${id}`); return TABS.includes(t) ? t : 'summary'; };
+const tabOf = (id) => {
+  const t = localGet(`tf-tab-${id}`);
+  return TABS.includes(t) && !(t === 'github' && state.board?.personal) ? t : 'summary';
+};
 function setTab(tab) {
   localSet(`tf-tab-${state.board.id}`, tab);
   renderTab();
@@ -363,8 +533,9 @@ function setTab(tab) {
 for (const tab of TABS) $(`tab-${tab}`).onclick = () => setTab(tab);
 document.querySelector('.tabs').addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-  const i = TABS.indexOf(tabOf(state.board.id)) + (e.key === 'ArrowRight' ? 1 : -1);
-  setTab(TABS[(i + TABS.length) % TABS.length]);
+  const tabs = TABS.filter((t) => !$(`tab-${t}`).hidden);
+  const i = tabs.indexOf(tabOf(state.board.id)) + (e.key === 'ArrowRight' ? 1 : -1);
+  setTab(tabs[(i + tabs.length) % tabs.length]);
   $(`tab-${tabOf(state.board.id)}`).focus();
 });
 function renderTab() {
@@ -376,23 +547,26 @@ function renderTab() {
   }
   if (tab === 'summary') loadSummary();
   if (tab === 'documents') loadDocuments();
+  if (tab === 'github') loadGithub();
 }
 
 function renderBoard() {
   const b = state.board;
   const personal = Boolean(b.personal);
-  $('board-name').textContent = personal ? 'Personal' : b.name;
+  $('board-name').textContent = personal ? 'My to-dos' : b.name;
   const week = b.kind === 'school' ? weekOf(today(), b.sem_start) : null;
   const team = state.members.filter((m) => m.role !== 'supervisor').length;
-  const bits = personal ? ['Only you can see this list']
-    : [b.kind === 'personal' ? 'Personal project' : b.course_code || 'School project',
-      `${team} ${team === 1 ? 'person' : 'people'}`, `you are ${ROLE_NAME[b.role].toLowerCase()}`];
+  const bits = personal ? ['Personal · only you can see this list']
+    : [b.kind === 'personal' ? 'Personal project' : `School${b.course_code ? ` · ${b.course_code}` : ''}`,
+      `${team} ${team === 1 ? 'person' : 'people'}`, `you are ${roleName(b.role, b.kind).toLowerCase()}`];
   $('pin-toggle').hidden = personal;
   $('pin-toggle').setAttribute('aria-pressed', Boolean(b.pinned));
   $('pin-toggle').textContent = b.pinned ? '★ Pinned' : '☆ Pin';
   $('pin-toggle').title = b.pinned ? 'Unpin this project' : 'Pin this project to the top of the sidebar';
   $('board-sub').replaceChildren(bits.filter(Boolean).join(' · '), week ? ' · ' : '', week ? h('b', {}, `Week ${week}`) : '');
   $('show-team').hidden = personal;
+  $('show-team').textContent = b.kind === 'personal' ? 'People' : 'Team';
+  $('tab-github').hidden = personal;
   $('show-contrib').hidden = personal || team < 2;
   $('mine-toggle').hidden = personal || team < 2;
   $('show-settings').hidden = b.role !== 'owner';
@@ -565,8 +739,13 @@ function renderSummary({ status, activity, workload, unassigned }) {
     ]),
     h('button', { class: 'link', onclick: () => setTab('tasks') }, 'Open tasks'));
 
+  const clear = b.role === 'owner' && activity.length > 0 && h('button', { class: 'link' }, 'Clear');
+  if (clear) clear.onclick = confirmTwice(clear, async () => {
+    await api(`/boards/${b.id}/activity`, { method: 'DELETE' });
+    loadSummary();
+  }, 'Click again to clear');
   const recent = h('section', { class: 'box summary-activity' },
-    h('h3', {}, 'Recent activity'),
+    h('div', { class: 'box-head' }, h('h3', {}, 'Recent activity'), clear),
     activity.length
       ? h('ul', { class: 'activity' }, activity.map((a) => h('li', {},
           avatar(a),
@@ -587,7 +766,107 @@ function renderSummary({ status, activity, workload, unassigned }) {
     })()),
     unassigned > 0 && h('p', { class: 'muted small-note' }, `${unassigned} open task${unassigned === 1 ? ' has' : 's have'} nobody assigned.`));
 
-  $('panel-summary').replaceChildren(about, goal, work, recent, team || '');
+  const code = b.github_repo && h('section', { class: 'box summary-code' },
+    h('div', { class: 'box-head' }, h('h3', {}, 'Code'), h('button', { class: 'link', onclick: () => setTab('github') }, 'Open GitHub')),
+    h('p', { class: 'muted' }, 'Checking GitHub…'));
+  $('panel-summary').replaceChildren(about, goal, work, recent, code || '', team || '');
+  if (code) {
+    api(`/boards/${b.id}/github`).then((g) => {
+      if (!code.isConnected || !g.linked) return;
+      code.lastElementChild.replaceWith(h('div', { class: 'code-stats' },
+        h('a', { class: 'repo-name', href: g.repo.url, target: '_blank', rel: 'noopener' }, g.repo.full_name),
+        h('div', { class: 'stat-row' },
+          stat(g.commits_this_week, 'commits this week'), stat(g.repo.open_pulls, 'open pull requests'), stat(g.repo.open_issues, 'open issues')),
+        g.commits[0] && h('p', { class: 'muted small-note' }, `Last commit ${ago(g.commits[0].date)}: “${g.commits[0].message}”`)));
+    }, (err) => { if (code.isConnected) code.lastElementChild.replaceWith(h('p', { class: 'error' }, err.message)); });
+  }
+}
+const stat = (n, label) => h('div', { class: 'stat' }, h('span', { class: 'stat-num' }, String(n)), h('span', { class: 'stat-label' }, label));
+
+// ---------- GitHub ----------
+async function loadGithub() {
+  const b = state.board;
+  const panel = $('panel-github');
+  if (!b.github_repo) return renderGithubLink(panel);
+  panel.replaceChildren(h('p', { class: 'muted' }, 'Loading from GitHub…'));
+  try {
+    const g = await api(`/boards/${b.id}/github`);
+    if (state.view.kind !== 'board' || state.view.id !== b.id || tabOf(b.id) !== 'github') return;
+    renderGithub(panel, g);
+  } catch (err) {
+    panel.replaceChildren(h('section', { class: 'box' },
+      h('h3', {}, b.github_repo), h('p', { class: 'error' }, err.message),
+      h('div', { class: 'row-actions' },
+        h('button', { class: 'btn', onclick: loadGithub }, 'Try again'),
+        b.role === 'owner' && h('button', { class: 'link', onclick: () => renderGithubLink(panel) }, 'Change repository'),
+        !state.me.has_github_token && h('button', { class: 'link', onclick: () => showProfile('settings') }, 'Add a GitHub token'))));
+  }
+}
+
+function renderGithubLink(panel) {
+  const b = state.board;
+  const owner = b.role === 'owner';
+  const input = h('input', { value: b.github_repo || '', placeholder: 'izzhazriq/medina-store or https://github.com/…', 'aria-label': 'GitHub repository', spellcheck: 'false', autocomplete: 'off' });
+  const error = h('p', { class: 'error', role: 'alert' });
+  panel.replaceChildren(h('section', { class: 'box github-empty' },
+    h('h3', {}, 'Link a GitHub repository'),
+    h('p', { class: 'muted' }, 'See the project’s commits, pull requests and issues here, turn issues into tasks, and link commits to tasks by writing the task’s key, like TF-12, in the commit message.'),
+    owner
+      ? h('form', { class: 'inline-form', onsubmit: async (e) => {
+          e.preventDefault();
+          try {
+            ({ board: state.board } = await api(`/boards/${b.id}`, { method: 'PATCH', body: { github_repo: input.value } }));
+            loadGithub();
+          } catch (err) { error.textContent = err.message; }
+        } }, input, h('button', { class: 'btn primary', type: 'submit' }, 'Link'))
+      : h('p', {}, 'Ask the project’s leader to link one in Settings.'),
+    error));
+}
+
+function renderGithub(panel, g) {
+  const b = state.board;
+  const edit = canWork(b.role);
+  const taskChips = (tasks) => tasks.map((t) => h('button', { class: `chip task-chip ${t.status}`, onclick: () => openTask(t.id), title: t.title }, `TF-${t.id}`));
+  const repo = g.repo;
+  const head = h('section', { class: 'box repo-head' },
+    h('div', { class: 'box-head' },
+      h('div', {},
+        h('a', { class: 'repo-name', href: repo.url, target: '_blank', rel: 'noopener' }, repo.full_name),
+        repo.private && h('span', { class: 'chip' }, 'Private')),
+      b.role === 'owner' && h('button', { class: 'link', onclick: () => renderGithubLink(panel) }, 'Change')),
+    repo.description && h('p', { class: 'muted' }, repo.description),
+    h('div', { class: 'stat-row four' },
+      stat(g.commits_this_week, 'commits this week'), stat(repo.open_pulls, 'open pull requests'), stat(repo.open_issues, 'open issues'),
+      h('div', { class: 'stat' }, h('span', { class: 'stat-num small' }, repo.pushed_at ? ago(repo.pushed_at) : '—'), h('span', { class: 'stat-label' }, `last push · ${repo.default_branch}`))),
+    h('p', { class: 'muted small-note' }, 'Tip: write a task’s key, like ', h('code', {}, 'TF-12'), ', in a commit message or pull request title to link it to that task.'));
+
+  const list = (title, items, row, empty) => h('section', { class: 'box gh-list' },
+    h('h3', {}, title, h('span', { class: 'muted' }, ` ${items.length}`)),
+    items.length ? h('ul', {}, items.map(row)) : h('p', { class: 'muted' }, empty));
+  const when = (iso) => h('time', { datetime: iso, title: new Date(iso).toLocaleString('en-MY') }, ago(iso));
+
+  const commits = list('Recent commits', g.commits, (c) => h('li', {},
+    h('a', { class: 'sha', href: c.url, target: '_blank', rel: 'noopener' }, c.sha),
+    h('span', { class: 'gh-title' }, c.message),
+    h('span', { class: 'gh-meta' }, ...taskChips(c.tasks), `${c.author} · `, when(c.date))), 'No commits yet.');
+  const pulls = list('Open pull requests', g.pulls, (p) => h('li', {},
+    h('a', { class: 'sha', href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`),
+    h('span', { class: 'gh-title' }, p.title, p.draft ? h('span', { class: 'chip' }, 'Draft') : ''),
+    h('span', { class: 'gh-meta' }, ...taskChips(p.tasks), `${p.author} · `, when(p.created_at))), 'No open pull requests.');
+  const issues = list('Open issues', g.issues, (i) => h('li', {},
+    h('a', { class: 'sha', href: i.url, target: '_blank', rel: 'noopener' }, `#${i.number}`),
+    h('span', { class: 'gh-title' }, i.title, ...i.labels.map((l) => h('span', { class: 'chip' }, l))),
+    h('span', { class: 'gh-meta' },
+      i.task_id
+        ? h('button', { class: 'chip task-chip', onclick: () => openTask(i.task_id) }, `TF-${i.task_id}`)
+        : edit && h('button', { class: 'link', onclick: async () => {
+            const { task } = await api(`/boards/${b.id}/github/issues/${i.number}`, { method: 'POST' });
+            await loadGithub();
+            openTask(task.id);
+          } }, 'Make a task'),
+      when(i.created_at))), 'No open issues.');
+
+  panel.replaceChildren(head, h('div', { class: 'gh-grid' }, commits, h('div', { class: 'stack-tight' }, pulls, issues)));
 }
 
 // ---------- Documents ----------
@@ -742,6 +1021,10 @@ function renderTask() {
   $('task-panel').classList.toggle('is-subtask', isSub);
   $('t-where').textContent = t.personal ? 'Personal' : [t.course_code, t.board_name].filter(Boolean).join(' · ');
   $('t-kind').hidden = !isSub;
+  // The key links commits to this task when the project has a GitHub repository.
+  $('t-key').hidden = !t.github_repo;
+  $('t-key').textContent = `TF-${t.id}`;
+  $('t-key').title = `Write TF-${t.id} in a commit message to link it here. Click to copy.`;
   $('t-parent').hidden = !isSub;
   $('t-parent').replaceChildren('← Back to ', h('b', {}, t.parent_title || 'the task'));
   $('t-done').setAttribute('aria-label', isSub ? 'Mark subtask as done' : 'Mark as done');
@@ -876,13 +1159,13 @@ drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
 drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('drag'); uploadFiles([...e.dataTransfer.files]); });
 
 // Two-step delete: the first click asks, the second confirms.
-function confirmTwice(btn, action) {
+function confirmTwice(btn, action, armedText = 'Click again to delete') {
   return async () => {
     const label = btn.dataset.label || btn.textContent;
     btn.dataset.label = label;
     if (btn.dataset.armed !== 'true') {
       btn.dataset.armed = 'true';
-      btn.textContent = 'Click again to delete';
+      btn.textContent = armedText;
       setTimeout(() => { btn.dataset.armed = ''; btn.textContent = label; }, 3000);
       return;
     }
@@ -898,6 +1181,9 @@ $('t-delete').onclick = confirmTwice($('t-delete'), async () => {
   if (parentId) await openTask(parentId); else $('task-panel').close();
 });
 $('t-close').onclick = () => $('task-panel').close();
+$('t-key').onclick = async () => {
+  try { await navigator.clipboard.writeText(`TF-${state.task.id}`); toast(`Copied TF-${state.task.id}`); } catch { /* clipboard blocked */ }
+};
 $('task-panel').addEventListener('close', () => { state.task = null; refresh(); });
 // Clicking the dimmed area beside the panel closes it.
 $('task-panel').addEventListener('click', (e) => { if (e.target === $('task-panel')) $('task-panel').close(); });
@@ -915,7 +1201,8 @@ function setFormKind(kind) {
   $('pf-course-field').hidden = !school;
   $('pf-start-field').hidden = !school;
   $('pf-template-field').hidden = Boolean(editing) || !school;
-  $('pf-name').placeholder = school ? 'Database group assignment' : 'Portfolio website';
+  $('pf-name').placeholder = school ? 'Database group assignment' : 'Medina Brand Store website';
+  if (!editing) $('pf-title').textContent = school ? 'New school project' : 'New personal project';
 }
 for (const b of $('pf-kind').querySelectorAll('button')) b.onclick = () => setFormKind(b.dataset.kind);
 
@@ -930,10 +1217,13 @@ function openProjectDialog(board) {
   $('pf-template').value = 'blank';
   $('pf-delete').hidden = !board || personal;
   $('pf-error').textContent = '';
-  setFormKind(personal ? 'school' : board?.kind ?? 'school');
+  $('pf-github').value = board?.github_repo ?? '';
+  setFormKind(personal ? 'school' : board?.kind ?? state.space);
+  // New projects go in the space you're in. A student can move one to the other space in its settings.
+  $('pf-kind-field').hidden = personal || !board || Boolean(fixedSpace());
   // The personal list only has a Week 1 date.
-  $('pf-kind-field').hidden = personal;
   $('pf-name-field').hidden = personal;
+  $('pf-github-field').hidden = personal;
   if (personal) $('pf-course-field').hidden = true;
   $('project-dialog').showModal();
 }
@@ -944,7 +1234,7 @@ $('project-form').onsubmit = async (e) => {
   e.preventDefault();
   const body = editing?.personal
     ? { sem_start: $('pf-start').value || null }
-    : { name: $('pf-name').value, kind: formKind, course_code: $('pf-course').value, sem_start: $('pf-start').value || null };
+    : { name: $('pf-name').value, kind: formKind, course_code: $('pf-course').value, sem_start: $('pf-start').value || null, github_repo: $('pf-github').value };
   try {
     if (editing) {
       await api(`/boards/${editing.id}`, { method: 'PATCH', body });
@@ -965,34 +1255,119 @@ $('pf-delete').onclick = confirmTwice($('pf-delete'), async () => {
   await api(`/boards/${editing.id}`, { method: 'DELETE' });
   $('project-dialog').close();
   await loadBoards();
-  await showMyWork();
+  await showHome();
 });
 
-// ---------- Profile ----------
-function showProfile() {
+// ---------- Profile (laid out like Jira's) ----------
+const COVERS = ['ember', 'ocean', 'forest', 'dusk', 'slate', 'rose'];
+const FACTS = [
+  ['job_title', 'Job title', 'briefcase'], ['department', 'Department', 'building'], ['organization', 'Organisation', 'org'], ['location', 'Location', 'pin'],
+];
+let profileTab = 'profile';
+let readAccountType = () => state.me.account_type;
+
+function showProfile(tab = 'profile') {
   state.view = { kind: 'profile' };
+  profileTab = tab;
   showView('profile');
   markNav();
   renderProfile();
+  loadProfileOverview();
 }
+
 function renderProfile() {
   const me = state.me;
+  $('profile-cover').dataset.cover = me.cover || 'ember';
+  $('cover-picker').replaceChildren(...COVERS.map((c) => h('button', {
+    class: 'cover-dot', 'data-cover': c, 'aria-label': `${c} cover`, 'aria-pressed': c === me.cover,
+    onclick: () => saveMe({ cover: c }),
+  })));
   $('profile-avatar').replaceChildren(avatar(me, 'avatar avatar-xl'));
+  $('settings-avatar').replaceChildren(avatar(me, 'avatar avatar-lg'));
   $('profile-name').textContent = me.name;
-  $('profile-email').textContent = me.email;
-  $('profile-bio').textContent = me.bio || '';
-  $('profile-bio').hidden = !me.bio;
+  $('profile-line').textContent = [me.job_title, me.organization].filter(Boolean).join(' · ') || ACCOUNT_TYPES[me.account_type].label;
   $('photo-remove').hidden = !me.avatar_url;
+
+  for (const t of ['profile', 'settings']) {
+    $(`ptab-${t}`).setAttribute('aria-selected', t === profileTab);
+    $(`ppanel-${t}`).hidden = t !== profileTab;
+  }
+
+  // About: the facts, or the form when editing
+  const fact = (iconName, label, value, placeholder) => [
+    h('dt', {}, icon(iconName), label),
+    h('dd', { class: value ? '' : 'muted' }, value || placeholder)];
+  $('profile-facts').replaceChildren(
+    ...FACTS.flatMap(([key, label, icon]) => fact(icon, label, me[key], 'Not added')),
+    ...fact('cap', 'Account', `${ACCOUNT_TYPES[me.account_type].label} account`),
+    ...(me.bio ? fact('note', 'About', me.bio) : []));
+  $('profile-contact').replaceChildren(
+    ...fact('mail', 'Email', me.email),
+    ...(me.github_login ? fact('code', 'GitHub', `@${me.github_login}`) : []),
+    ...fact('calendar', 'Joined', new Date(parseTime(me.created_at)).toLocaleDateString('en-MY', { month: 'long', year: 'numeric' })));
   $('pr-name').value = me.name;
+  for (const [key] of FACTS) $(`pr-${key}`).value = me[key] || '';
   $('pr-bio').value = me.bio || '';
+
+  // Account settings
+  readAccountType = typePicker(pickers[2], me.account_type);
   $('pr-email').value = me.email;
+  $('pr-email-password-field').hidden = !me.has_password;
+  $('password-title').textContent = me.has_password ? 'Password' : 'Set a password';
+  $('pr-current-field').hidden = !me.has_password;
+  $('gh-status').textContent = me.has_github_token
+    ? `Connected as @${me.github_login}. Private repositories you can see on GitHub work in your projects.`
+    : 'Public repositories work without this. Add a token to see private ones.';
+  $('gh-remove').hidden = !me.has_github_token;
+  $('gh-save').textContent = me.has_github_token ? 'Replace token' : 'Save token';
+  renderThemeControls();
   renderMe();
 }
+
+async function loadProfileOverview() {
+  const { projects, workedOn, stats, activity } = await api('/me/overview');
+  if (state.view.kind !== 'profile') return;
+  $('profile-stats').replaceChildren(stat(stats.open, 'open tasks'), stat(stats.done_week, 'done this week'), stat(stats.done, 'done in total'));
+  $('profile-places').replaceChildren(...(projects.length ? projects.map((p) => h('li', {},
+    h('button', { class: 'place', onclick: () => showBoard(p.id) },
+      h('span', { class: `place-icon space-${p.kind}` }, initials(p.name) || '?'),
+      h('span', { class: 'place-name' }, p.name, h('small', {}, [p.kind === 'personal' ? 'Personal' : p.course_code || 'School', roleName(p.role, p.kind)].join(' · '))))))
+    : [h('li', { class: 'muted' }, 'No projects yet.')]));
+  $('profile-worked').replaceChildren(...(workedOn.length ? workedOn.map((t) => h('li', {},
+    h('button', { class: 'worked', onclick: () => openTask(t.id) },
+      h('span', { class: `status-dot ${t.status}`, title: t.status }),
+      h('span', { class: 'worked-title' }, t.title, h('small', {}, `${t.personal ? 'My to-dos' : t.board_name}${t.parent_id ? ' · subtask' : ''}`)),
+      h('time', { datetime: t.updated_at }, ago(t.updated_at)))))
+    : [h('li', { class: 'muted' }, 'Nothing yet. Tasks you make or are given show up here.')]));
+  $('profile-activity').replaceChildren(...(activity.length ? activity.map((a) => h('li', {},
+    avatar(a),
+    h('span', {}, h('b', {}, 'You'), ' ', a.detail, h('small', { class: 'muted' }, ` in ${a.personal ? 'My to-dos' : a.board_name}`)),
+    h('time', { datetime: a.created_at, title: fmtTime(a.created_at) }, ago(a.created_at))))
+    : [h('li', { class: 'muted' }, 'Nothing yet.')]));
+}
+
+async function saveMe(body) {
+  ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body }));
+  renderProfile();
+}
+
 $('nav-profile').onclick = () => {
-  for (const f of ['email-form', 'password-form']) $(f).reset();
-  for (const id of ['photo-error', 'details-error', 'details-saved', 'email-error', 'email-saved', 'password-error', 'password-saved']) $(id).textContent = '';
+  for (const f of ['email-form', 'password-form', 'github-form']) $(f).reset();
+  for (const id of ['photo-error', 'details-error', 'details-saved', 'email-error', 'email-saved', 'password-error', 'password-saved',
+    'type-error', 'type-saved', 'github-error', 'github-saved']) $(id).textContent = '';
+  setEditing(false);
   showProfile();
 };
+for (const t of ['profile', 'settings']) $(`ptab-${t}`).onclick = () => { profileTab = t; renderProfile(); };
+
+function setEditing(on) {
+  $('details-fields').hidden = !on;
+  $('profile-facts').hidden = on;
+  $('details-edit').hidden = on;
+  if (on) $('pr-job_title').focus();
+}
+$('details-edit').onclick = () => setEditing(true);
+$('details-cancel').onclick = () => { setEditing(false); renderProfile(); };
 
 // Each form shows its own result beside its button.
 function profileForm(id, action) {
@@ -1007,21 +1382,45 @@ function profileForm(id, action) {
   };
 }
 profileForm('details', async () => {
-  ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body: { name: $('pr-name').value, bio: $('pr-bio').value } }));
+  const body = { name: $('pr-name').value, bio: $('pr-bio').value };
+  for (const [key] of FACTS) body[key] = $(`pr-${key}`).value;
+  ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body }));
+  setEditing(false);
   return 'Saved.';
 });
+profileForm('type', async () => {
+  const type = readAccountType();
+  if (type === state.me.account_type) return '';
+  ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body: { account_type: type } }));
+  setSpace(fixedSpace() ?? state.space, { quiet: true });
+  await loadBoards();
+  return `You now have a ${ACCOUNT_TYPES[type].label.toLowerCase()} account.`;
+});
+profileForm('github', async () => {
+  const { login } = await api('/me/github-token', { method: 'PUT', body: { token: $('gh-token').value } });
+  $('gh-token').value = '';
+  ({ user: state.me } = await api('/auth/me'));
+  return `Connected as @${login}.`;
+});
+$('gh-remove').onclick = async () => {
+  await api('/me/github-token', { method: 'DELETE' });
+  ({ user: state.me } = await api('/auth/me'));
+  renderProfile();
+};
 profileForm('email', async () => {
   ({ user: state.me } = await api('/auth/email', { method: 'POST', body: { email: $('pr-email').value, password: $('pr-email-password').value } }));
   $('pr-email-password').value = '';
   return 'Email changed. Use it next time you log in.';
 });
 profileForm('password', async () => {
+  const first = !state.me.has_password;
   await api('/auth/password', { method: 'POST', body: { currentPassword: $('pr-current').value, newPassword: $('pr-new').value } });
   $('password-form').reset();
-  return 'Password changed. Other browsers have been signed out.';
+  ({ user: state.me } = await api('/auth/me'));
+  return first ? 'Password set. You can now log in with your email too.' : 'Password changed. Other browsers have been signed out.';
 });
 
-$('photo-input').onchange = async (e) => {
+async function uploadPhoto(e) {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
@@ -1032,7 +1431,9 @@ $('photo-input').onchange = async (e) => {
     state.me = { ...state.me, avatar_url };
     renderProfile();
   } catch (err) { $('photo-error').textContent = err.message; }
-};
+}
+$('photo-input').onchange = uploadPhoto;
+$('photo-input-2').onchange = uploadPhoto;
 $('photo-remove').onclick = async () => {
   await api('/me/avatar', { method: 'DELETE' });
   state.me = { ...state.me, avatar_url: null };
@@ -1048,13 +1449,16 @@ function openPanel(title, ...content) {
 $('panel-close').onclick = () => $('panel-dialog').close();
 
 $('show-team').onclick = renderTeam;
+// Personal projects have no supervisors.
+const roleOptions = () => (state.board.kind === 'personal' ? ['owner', 'member'] : ['owner', 'member', 'supervisor']);
 function renderTeam() {
   const leader = state.board.role === 'owner';
+  const school = state.board.kind !== 'personal';
   const error = h('p', { class: 'error', role: 'alert' });
   const act = (fn) => async (e) => {
     try {
       await fn(e);
-      if (e?.target?.dataset?.leave) { $('panel-dialog').close(); await loadBoards(); await showMyWork(); return; }
+      if (e?.target?.dataset?.leave) { $('panel-dialog').close(); await loadBoards(); await showHome(); return; }
       await showBoard(state.board.id);
       renderTeam();
     } catch (err) { error.textContent = err.message; }
@@ -1065,8 +1469,8 @@ function renderTeam() {
     leader
       ? h('select', { 'aria-label': `Role for ${m.name}`,
           onchange: act((e) => api(`/boards/${state.board.id}/members/${m.id}`, { method: 'PATCH', body: { role: e.target.value } })) },
-        ...Object.entries(ROLE_NAME).map(([r, label]) => h('option', { value: r, selected: r === m.role }, label)))
-      : h('span', { class: 'chip' }, ROLE_NAME[m.role]),
+        ...roleOptions().map((r) => h('option', { value: r, selected: r === m.role }, roleName(r, state.board.kind))))
+      : h('span', { class: 'chip' }, roleName(m.role, state.board.kind)),
     (leader || m.id === state.me.id)
       ? h('button', { class: 'link', 'data-leave': m.id === state.me.id ? 'true' : null,
           onclick: act(() => api(`/boards/${state.board.id}/members/${m.id}`, { method: 'DELETE' })) }, m.id === state.me.id ? 'Leave' : 'Remove')
@@ -1076,13 +1480,14 @@ function renderTeam() {
     e.preventDefault();
     await api(`/boards/${state.board.id}/members`, { method: 'POST', body: { email: e.target.elements.email.value, role: e.target.elements.role.value } });
   }) },
-    h('input', { name: 'email', type: 'email', placeholder: 'Groupmate or supervisor’s email', 'aria-label': 'Email', required: true }),
-    h('select', { name: 'role', 'aria-label': 'Role' }, h('option', { value: 'member' }, 'Member'), h('option', { value: 'supervisor' }, 'Supervisor')),
+    h('input', { name: 'email', type: 'email', placeholder: school ? 'Groupmate or supervisor’s email' : 'Their email', 'aria-label': 'Email', required: true }),
+    h('select', { name: 'role', 'aria-label': 'Role' }, roleOptions().filter((r) => r !== 'owner').map((r) => h('option', { value: r }, roleName(r, state.board.kind)))),
     h('button', { class: 'btn primary', type: 'submit' }, 'Add'));
 
-  openPanel('Team', ...rows, invite, error,
-    h('p', { class: 'muted', style: 'margin:0;font-size:13px' },
-      'Leaders manage the project. Members add and do tasks. Supervisors can see everything, comment and mark work as done.'));
+  openPanel(school ? 'Team' : 'People', ...rows, invite, error,
+    h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, school
+      ? 'Leaders manage the project. Members add and do tasks. Supervisors can see everything, comment and mark work as done. Supervisor accounts can only be supervisors.'
+      : 'Owners manage the project. Collaborators add and do tasks. Personal projects are for personal or student accounts.'));
 }
 
 $('show-contrib').onclick = async () => {

@@ -198,8 +198,8 @@ export function taskRoutes(db, { uploadDir: dir }) {
 
   function getTask(id) {
     return db.prepare(`
-      SELECT ${TASK_LIST_COLUMNS}, t.notes, t.created_at, b.name AS board_name, b.personal, b.course_code, b.sem_start, b.kind,
-             u.name AS created_by_name
+      SELECT ${TASK_LIST_COLUMNS}, t.notes, t.created_at, b.name AS board_name, b.personal, b.course_code, b.sem_start, b.kind, b.github_repo,
+             t.github_issue, u.name AS created_by_name
       FROM tasks t JOIN boards b ON b.id = t.board_id LEFT JOIN users u ON u.id = t.created_by
       WHERE t.id = ?`).get(id);
   }

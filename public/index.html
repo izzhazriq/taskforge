@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TaskForge</title>
+  <script src="/theme.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Inter+Tight:wght@400;500;600&display=swap">
@@ -12,21 +13,49 @@
 <body>
   <!-- Signed-out view -->
   <main id="auth-view" class="auth" hidden>
+    <button class="theme-toggle floating" data-theme-toggle title="Switch between light and dark" aria-label="Switch between light and dark"></button>
     <div class="auth-card">
       <h1 class="logo">Task<span>Forge</span></h1>
-      <p class="muted">Your assignments, FYP and group work in one list.</p>
-      <div class="seg" role="tablist">
-        <button id="tab-login" role="tab" aria-selected="true">Log in</button>
-        <button id="tab-register" role="tab" aria-selected="false">Sign up</button>
+      <p class="muted" id="auth-lead">Your assignments, FYP, group work and side projects in one place.</p>
+
+      <div id="auth-main">
+        <div class="seg" role="tablist">
+          <button id="tab-login" role="tab" aria-selected="true">Log in</button>
+          <button id="tab-register" role="tab" aria-selected="false">Sign up</button>
+        </div>
+        <a class="btn google" id="google-btn" href="/api/auth/google" hidden>
+          <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.2C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z"/><path fill="#FBBC05" d="M10.6 28.7c-.5-1.4-.8-3-.8-4.7s.3-3.3.8-4.7l-7.9-6.2C1 16.6 0 20.2 0 24s1 7.4 2.7 10.9l7.9-6.2z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.2-8.5 2.2-6.2 0-11.5-4.1-13.4-9.8l-7.9 6.2C6.6 42.6 14.6 48 24 48z"/></svg>
+          <span>Continue with Google</span>
+        </a>
+        <div class="or" id="google-or" hidden><span>or with email</span></div>
+        <form id="auth-form" novalidate>
+          <fieldset class="account-types" id="type-field" hidden>
+            <legend>How will you use TaskForge?</legend>
+            <div class="type-options" data-type-picker></div>
+          </fieldset>
+          <label id="name-field" hidden>Name<input id="auth-name" autocomplete="name"></label>
+          <label>Email<input id="auth-email" type="email" autocomplete="email" required placeholder="you@student.uitm.edu.my"></label>
+          <label>Password<input id="auth-password" type="password" autocomplete="current-password" required minlength="8"></label>
+          <p class="error" id="auth-error" role="alert"></p>
+          <button class="btn primary" id="auth-submit" type="submit">Log in</button>
+        </form>
+        <p class="hint" id="demo-hint" hidden>This is the demo. Log in as <code>demo@taskforge.dev</code> / <code>demo1234</code>.</p>
       </div>
-      <form id="auth-form" novalidate>
-        <label id="name-field" hidden>Name<input id="auth-name" autocomplete="name"></label>
-        <label>Email<input id="auth-email" type="email" autocomplete="email" required placeholder="you@student.uni.edu.my"></label>
-        <label>Password<input id="auth-password" type="password" autocomplete="current-password" required minlength="8"></label>
-        <p class="error" id="auth-error" role="alert"></p>
-        <button class="btn primary" id="auth-submit" type="submit">Log in</button>
+
+      <!-- After "Continue with Google" for someone new -->
+      <form id="google-form" class="stack-plain" hidden>
+        <div>
+          <h2 class="welcome">Welcome, <span id="g-name"></span></h2>
+          <p class="muted" id="g-email"></p>
+        </div>
+        <fieldset class="account-types">
+          <legend>How will you use TaskForge?</legend>
+          <div class="type-options" data-type-picker></div>
+        </fieldset>
+        <p class="error" id="g-error" role="alert"></p>
+        <button class="btn primary" type="submit">Create my account</button>
+        <a class="link center" href="/">Cancel</a>
       </form>
-      <p class="hint" id="demo-hint" hidden>This is the demo. Log in as <code>demo@taskforge.dev</code> / <code>demo1234</code>.</p>
     </div>
   </main>
 
@@ -34,20 +63,27 @@
   <div id="app-view" class="app" hidden>
     <aside class="sidebar">
       <div class="logo small">Task<span>Forge</span></div>
+      <div class="space-switch" id="space-switch" role="tablist" aria-label="Space">
+        <button role="tab" data-space="school" aria-selected="true"><span>School</span><span class="badge" data-space-badge="school" hidden></span></button>
+        <button role="tab" data-space="personal" aria-selected="false"><span>Personal</span><span class="badge" data-space-badge="personal" hidden></span></button>
+      </div>
+      <div class="space-tag" id="space-tag" hidden></div>
       <form id="search-form" class="search" role="search">
         <input id="search-input" type="search" placeholder="Search tasks" aria-label="Search tasks" maxlength="100" autocomplete="off">
       </form>
       <nav class="nav">
         <button id="nav-mywork" class="nav-item"><span>My work</span><span class="badge" id="mywork-badge" hidden></span></button>
-        <button id="nav-personal" class="nav-item"><span>Personal</span></button>
+        <button id="nav-personal" class="nav-item"><span>My to-dos</span><small>only you</small></button>
         <div class="label" id="pinned-label" hidden>Pinned</div>
         <div id="pinned-list" class="nav"></div>
-        <div class="label">Projects</div>
+        <div class="label" id="projects-label">Projects</div>
         <div id="project-list" class="nav"></div>
+        <p class="nav-empty" id="projects-empty" hidden></p>
         <button class="nav-item add" id="new-project">+ New project</button>
       </nav>
       <div class="me">
         <button class="me-link" id="nav-profile" title="Your profile"><span id="me-avatar"></span><span id="me-name"></span></button>
+        <button class="theme-toggle" data-theme-toggle title="Switch between light and dark" aria-label="Switch between light and dark"></button>
         <button class="link" id="logout">Log out</button>
       </div>
     </aside>
@@ -58,7 +94,7 @@
         <header class="page-head">
           <div>
             <div class="sub" id="today-line"></div>
-            <h2>My work</h2>
+            <h2 id="mywork-title">My work</h2>
           </div>
         </header>
         <form id="quick-add" class="quick-add">
@@ -68,6 +104,17 @@
           <button class="btn primary" type="submit">Add</button>
         </form>
         <div id="mywork-groups" class="groups"></div>
+      </section>
+
+      <!-- Supervisors: the projects they look after -->
+      <section id="supervising-view" hidden>
+        <header class="page-head">
+          <div>
+            <div class="sub">School · supervisor</div>
+            <h2>Projects you supervise</h2>
+          </div>
+        </header>
+        <ul class="project-cards" id="supervising-list"></ul>
       </section>
 
       <!-- Search results -->
@@ -101,6 +148,7 @@
           <button role="tab" data-tab="summary" id="tab-summary">Summary</button>
           <button role="tab" data-tab="tasks" id="tab-tasks">Tasks</button>
           <button role="tab" data-tab="documents" id="tab-documents">Documents</button>
+          <button role="tab" data-tab="github" id="tab-github">GitHub</button>
         </nav>
 
         <div id="panel-summary" role="tabpanel" aria-labelledby="tab-summary" class="summary-grid"></div>
@@ -134,46 +182,119 @@
             <ul class="doc-grid" id="task-file-list"></ul>
           </section>
         </div>
+
+        <div id="panel-github" role="tabpanel" aria-labelledby="tab-github" class="stack-tight"></div>
       </section>
 
-      <!-- Profile -->
-      <section id="profile-view" hidden>
-        <header class="page-head"><div><div class="sub">Your account</div><h2>Profile</h2></div></header>
-        <div class="profile">
-          <div class="box profile-card">
-            <div id="profile-avatar" class="avatar-xl"></div>
-            <div class="profile-who">
-              <h3 id="profile-name"></h3>
-              <p class="muted" id="profile-email"></p>
-              <p id="profile-bio"></p>
-            </div>
-            <div class="photo-actions">
-              <label class="btn">Change photo<input type="file" id="photo-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden></label>
-              <button class="link" id="photo-remove">Remove photo</button>
-            </div>
-            <p class="error" id="photo-error" role="alert"></p>
+      <!-- Profile, laid out like Jira's: a cover, the person's details on the left, their work on the right -->
+      <section id="profile-view" class="profile-page" hidden>
+        <div class="cover" id="profile-cover">
+          <div class="cover-picker" id="cover-picker" role="group" aria-label="Cover colour"></div>
+        </div>
+        <div class="profile-head">
+          <div class="photo-wrap">
+            <div id="profile-avatar"></div>
+            <label class="photo-edit" title="Change photo">Change<input type="file" id="photo-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden></label>
           </div>
+          <div class="profile-who">
+            <h2 id="profile-name"></h2>
+            <p class="muted" id="profile-line"></p>
+          </div>
+          <nav class="tabs profile-tabs" role="tablist" aria-label="Profile">
+            <button role="tab" id="ptab-profile" data-ptab="profile" aria-selected="true">Profile</button>
+            <button role="tab" id="ptab-settings" data-ptab="settings" aria-selected="false">Account settings</button>
+          </nav>
+        </div>
+        <p class="error" id="photo-error" role="alert"></p>
 
-          <form id="details-form" class="box stack-form">
-            <h3>Details</h3>
-            <label>Name<input id="pr-name" maxlength="80" required autocomplete="name"></label>
-            <label>About you <small>(optional)</small><textarea id="pr-bio" rows="3" maxlength="300" placeholder="e.g. CS student at UiTM, FYP on smart parking"></textarea></label>
-            <div class="form-foot"><span class="saved" id="details-saved" aria-live="polite"></span><p class="error" id="details-error" role="alert"></p><button class="btn primary" type="submit">Save</button></div>
+        <div class="profile-body" id="ppanel-profile">
+          <aside class="profile-side">
+            <form id="details-form" class="box stack-form">
+              <div class="box-head"><h3>About</h3><button class="link" type="button" id="details-edit">Edit</button></div>
+              <dl class="facts" id="profile-facts"></dl>
+              <div class="edit-fields" id="details-fields" hidden>
+                <label>Full name<input id="pr-name" maxlength="80" required autocomplete="name"></label>
+                <label>Job title<input id="pr-job_title" maxlength="80" placeholder="e.g. Computer Science student"></label>
+                <label>Department<input id="pr-department" maxlength="80" placeholder="e.g. Faculty of Computer Science"></label>
+                <label>Organisation<input id="pr-organization" maxlength="80" placeholder="e.g. UiTM Shah Alam"></label>
+                <label>Location<input id="pr-location" maxlength="80" placeholder="e.g. Shah Alam, Selangor"></label>
+                <label>About you<textarea id="pr-bio" rows="3" maxlength="300" placeholder="A line or two about you"></textarea></label>
+                <div class="form-foot"><p class="error" id="details-error" role="alert"></p><button class="btn" type="button" id="details-cancel">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+              </div>
+              <span class="saved" id="details-saved" aria-live="polite"></span>
+            </form>
+            <section class="box">
+              <h3>Contact</h3>
+              <dl class="facts" id="profile-contact"></dl>
+            </section>
+            <section class="box">
+              <h3>Places you work in</h3>
+              <ul class="place-list" id="profile-places"></ul>
+            </section>
+          </aside>
+          <div class="profile-main">
+            <section class="box">
+              <div class="stat-row" id="profile-stats"></div>
+            </section>
+            <section class="box">
+              <h3>Worked on</h3>
+              <p class="muted small-note">Tasks you made or that are assigned to you, most recently changed first.</p>
+              <ul class="worked-list" id="profile-worked"></ul>
+            </section>
+            <section class="box">
+              <h3>Your recent activity</h3>
+              <ul class="activity" id="profile-activity"></ul>
+            </section>
+          </div>
+        </div>
+
+        <div class="settings-body" id="ppanel-settings" hidden>
+          <section class="box stack-form">
+            <h3>Appearance</h3>
+            <div class="seg small theme-seg" id="theme-seg" role="radiogroup" aria-label="Theme">
+              <button type="button" role="radio" data-theme-choice="system">Match my computer</button>
+              <button type="button" role="radio" data-theme-choice="light">Light</button>
+              <button type="button" role="radio" data-theme-choice="dark">Dark</button>
+            </div>
+          </section>
+
+          <form id="type-form" class="box stack-form">
+            <h3>Account type</h3>
+            <div class="type-options" data-type-picker></div>
+            <div class="form-foot"><span class="saved" id="type-saved" aria-live="polite"></span><p class="error" id="type-error" role="alert"></p><button class="btn" type="submit">Change account type</button></div>
+          </form>
+
+          <form id="github-form" class="box stack-form">
+            <h3>GitHub</h3>
+            <p class="muted small-note" id="gh-status"></p>
+            <div id="gh-add">
+              <label>Personal access token<input id="gh-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…"><small>Only needed for private repositories. Make one at github.com → Settings → Developer settings → Fine-grained tokens, with read access to Contents, Issues and Pull requests.</small></label>
+            </div>
+            <div class="form-foot"><span class="saved" id="github-saved" aria-live="polite"></span><p class="error" id="github-error" role="alert"></p><button class="link danger" type="button" id="gh-remove" hidden>Remove token</button><button class="btn" type="submit" id="gh-save">Save token</button></div>
           </form>
 
           <form id="email-form" class="box stack-form">
             <h3>Email</h3>
             <label>New email<input id="pr-email" type="email" required autocomplete="email"></label>
-            <label>Your password<input id="pr-email-password" type="password" required autocomplete="current-password"><small>To check it's really you.</small></label>
+            <label id="pr-email-password-field">Your password<input id="pr-email-password" type="password" autocomplete="current-password"><small>To check it's really you.</small></label>
             <div class="form-foot"><span class="saved" id="email-saved" aria-live="polite"></span><p class="error" id="email-error" role="alert"></p><button class="btn" type="submit">Change email</button></div>
           </form>
 
           <form id="password-form" class="box stack-form">
-            <h3>Password</h3>
-            <label>Current password<input id="pr-current" type="password" autocomplete="current-password" required></label>
+            <h3 id="password-title">Password</h3>
+            <label id="pr-current-field">Current password<input id="pr-current" type="password" autocomplete="current-password"></label>
             <label>New password<input id="pr-new" type="password" autocomplete="new-password" minlength="8" required><small>At least 8 characters. Other browsers will be signed out.</small></label>
             <div class="form-foot"><span class="saved" id="password-saved" aria-live="polite"></span><p class="error" id="password-error" role="alert"></p><button class="btn" type="submit">Change password</button></div>
           </form>
+
+          <section class="box stack-form">
+            <h3>Profile photo</h3>
+            <div class="photo-row"><span id="settings-avatar"></span>
+              <label class="btn">Upload a photo<input type="file" id="photo-input-2" accept="image/png,image/jpeg,image/gif,image/webp" hidden></label>
+              <button class="link danger" type="button" id="photo-remove">Remove photo</button>
+            </div>
+            <small class="muted">PNG, JPG, GIF or WebP, up to 2 MB.</small>
+          </section>
         </div>
       </section>
     </main>
@@ -184,6 +305,7 @@
     <div class="drawer-top">
       <span class="chip" id="t-where"></span>
       <span class="chip sub-chip" id="t-kind" hidden>Subtask</span>
+      <button class="chip key-chip" id="t-key" hidden></button>
       <span class="saved" id="t-saved" aria-live="polite"></span>
       <button class="btn" id="t-close">Close</button>
     </div>
@@ -260,8 +382,9 @@
         <small class="muted" id="pf-kind-hint"></small>
       </div>
       <label id="pf-name-field">Project name<input id="pf-name" maxlength="80" placeholder="Database group assignment"></label>
-      <label id="pf-course-field">Course code <small>(optional)</small><input id="pf-course" maxlength="20" placeholder="CSC584"></label>
-      <label id="pf-start-field">Week 1 starts on <small>(optional)</small><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
+      <label id="pf-course-field"><span>Course code <small>(optional)</small></span><input id="pf-course" maxlength="20" placeholder="CSC584"></label>
+      <label id="pf-start-field"><span>Week 1 starts on <small>(optional)</small></span><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
+      <label id="pf-github-field"><span>GitHub repository <small>(optional)</small></span><input id="pf-github" maxlength="200" placeholder="izzhazriq/medina-store or its link" spellcheck="false" autocomplete="off"><small>Shows its commits, pull requests and issues in the project’s GitHub section.</small></label>
       <label id="pf-template-field">Start with
         <select id="pf-template">
           <option value="blank">Nothing, I’ll add tasks myself</option>
