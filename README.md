@@ -20,9 +20,11 @@ Students juggle personal deadlines, several group projects and an FYP at the sam
 Each project has three sections:
 - **Summary**: what the project is about and its goal (both editable), how many items are to do, doing and done, what's late, recent activity, and each person's workload.
 - **Tasks**: three columns (*To do*, *Doing*, *Done*). Drag cards between them.
-- **Documents**: files for the whole project, like the brief or the rubric, plus every file attached to its tasks.
+- **Documents**: PDFs, pictures, videos and any other files for the whole project, up to 500 MB each, plus every file attached to its tasks. Pictures, videos and PDFs open right in TaskForge. Filter by type, and watch big uploads with a progress bar.
 
 ![A project summary](docs/summary.png)
+
+![Documents: PDFs, pictures, videos and other files](docs/documents.png)
 
 **Each task** opens in a side panel where you can:
 - set a due date, see which semester week it falls in, and star it as important
@@ -177,8 +179,8 @@ users ──< memberships >── boards ──< tasks ──< tasks (subtasks, 
 | PATCH | `/api/boards/:id` | leader; members may change `description`, `goal` and `goal_date` | Change the project |
 | DELETE | `/api/boards/:id` | leader | Delete the project and its files |
 | PUT / DELETE | `/api/boards/:id/pin` | anyone in it | Pin or unpin it for yourself |
-| GET / POST | `/api/boards/:id/documents` | anyone in it / leader or member | List or add project documents |
-| GET / DELETE | `/api/documents/:id` | anyone in it / uploader or leader | Download or delete a document |
+| GET / POST | `/api/boards/:id/documents` | anyone in it / leader or member | List or add project documents (raw body streamed to disk, name in `X-Filename`, up to 500 MB, programs refused) |
+| GET / DELETE | `/api/documents/:id` | anyone in it / uploader or leader | Download or delete a document. `?view=1` shows a picture, video or PDF in the browser, if the file's contents really are one |
 | POST / PATCH / DELETE | `/api/boards/:id/members[/:userId]` | leader (or yourself, to leave) | Manage the team |
 | GET | `/api/boards/:id/contributions` | anyone in it | Contributions report |
 | POST | `/api/boards/:id/tasks` | leader or member | Add a task |

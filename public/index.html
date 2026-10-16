@@ -114,16 +114,24 @@
           <label class="upload" id="doc-upload">
             <input type="file" id="doc-file-input" multiple>
             <span>Add documents</span>
-            <small>Rubrics, briefs, reports, slides. PDF, Word, slides, Excel, images or ZIP, up to 10 MB each</small>
+            <small>PDFs, pictures, videos or any other file, up to 500 MB each. Drop them here or click to choose.</small>
           </label>
+          <ul class="upload-list" id="doc-progress"></ul>
           <p class="error" id="doc-error" role="alert"></p>
+          <div class="doc-filters" role="group" aria-label="Show">
+            <button data-filter="all" aria-pressed="true">All</button>
+            <button data-filter="pdf" aria-pressed="false">PDFs</button>
+            <button data-filter="image" aria-pressed="false">Pictures</button>
+            <button data-filter="video" aria-pressed="false">Videos</button>
+            <button data-filter="other" aria-pressed="false">Other files</button>
+          </div>
           <section class="doc-section">
-            <h3>Project documents</h3>
-            <ul class="files" id="doc-list"></ul>
+            <h3>Project documents <span class="muted" id="doc-count"></span></h3>
+            <ul class="doc-grid" id="doc-list"></ul>
           </section>
           <section class="doc-section">
-            <h3>Attached to tasks</h3>
-            <ul class="files" id="task-file-list"></ul>
+            <h3>Attached to tasks <span class="muted" id="task-file-count"></span></h3>
+            <ul class="doc-grid" id="task-file-list"></ul>
           </section>
         </div>
       </section>
@@ -269,6 +277,17 @@
         <button class="btn primary" type="submit" id="pf-submit">Create</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Document viewer -->
+  <dialog id="viewer" class="viewer">
+    <div class="viewer-top">
+      <span class="viewer-name" id="viewer-name"></span>
+      <a class="btn" id="viewer-download">Download</a>
+      <a class="btn" id="viewer-open" target="_blank" rel="noopener">Open in new tab</a>
+      <button class="btn" id="viewer-close">Close</button>
+    </div>
+    <div class="viewer-body" id="viewer-body"></div>
   </dialog>
 
   <div id="toast" class="toast" role="alert" hidden></div>

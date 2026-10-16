@@ -282,6 +282,42 @@ test('documents belong to the project and list task files too', async () => {
   assert.equal((await stranger(`/documents/${up.data.document.id}`)).status, 404);
   assert.equal((await leader(`/boards/${projectId}/contributions`)).data.contributions.find((c) => c.name === 'Musa Ali' || c.name === 'Musa').files, 1);
 
+  // Pictures, videos and PDFs can be shown in the browser; other files only download.
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(64)]);
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+  const upload = (name, body) => member(`/boards/${projectId}/documents`, {
+    method: 'POST', raw: body, headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(name) },
+  });
+  const video = await upload('Demo video.mp4', mp4);
+  assert.equal(video.status, 201);
+  assert.equal(video.data.document.preview, 'video');
+  assert.equal((await upload('Poster.png', png)).data.document.preview, 'image');
+  assert.equal((await upload('Report.pdf', Buffer.from('%PDF-1.7 report'))).data.document.preview, 'pdf');
+  assert.equal((await upload('fake.png', Buffer.from('<html><script>alert(1)</script></html>'))).data.document.preview, null,
+    'a file only previews if its contents match');
+  assert.equal((await upload('Design.fig', Buffer.from('figma'))).status, 201, 'any other file is fine');
+  assert.equal((await upload('page.html', Buffer.from('<b>hi</b>'))).status, 201);
+  assert.equal((await upload('setup.bat', Buffer.from('del *'))).status, 400, 'programs are refused');
+  assert.equal((await upload('empty.txt', Buffer.alloc(0))).status, 400);
+
+  const docs = (await member(`/boards/${projectId}/documents`)).data.documents;
+  assert.ok(docs.every((d) => !('stored_name' in d)), 'internal file names stay private');
+  const fake = docs.find((d) => d.filename === 'fake.png');
+  const fakeView = await member(`/documents/${fake.id}?view=1`);
+  assert.match(fakeView.headers.get('content-disposition'), /attachment/, 'a fake picture downloads instead of showing');
+  const html = docs.find((d) => d.filename === 'page.html');
+  assert.match((await member(`/documents/${html.id}?view=1`)).headers.get('content-disposition'), /attachment/);
+
+  const play = await supervisor(`/documents/${video.data.document.id}?view=1`);
+  assert.equal(play.status, 200);
+  assert.equal(play.headers.get('content-type'), 'video/mp4');
+  assert.match(play.headers.get('content-disposition'), /^inline/);
+  assert.match(play.headers.get('content-security-policy'), /sandbox/);
+  const part = await supervisor(`/documents/${video.data.document.id}?view=1`, { headers: { Range: 'bytes=0-9' } });
+  assert.equal(part.status, 206, 'videos can seek');
+  assert.equal(part.data.length, 10);
+
+
   // Deleting a project removes its files from disk.
   const tmp = (await leader('/boards', { method: 'POST', body: { name: 'Temp' } })).data.board;
   await leader(`/boards/${tmp.id}/documents`, { method: 'POST', raw: Buffer.from('x'), headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': 'x.txt' } });
