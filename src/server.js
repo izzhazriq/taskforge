@@ -1,7 +1,8 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from './db.js';
+import { openDb, backup } from './db.js';
+import { DEMO, UPLOAD_DIR, BACKUP_DIR, PORT } from './config.js';
 import { requireUser } from './auth.js';
 import { authRoutes } from './routes/auth.js';
 import { boardRoutes } from './routes/boards.js';
@@ -9,10 +10,19 @@ import { taskRoutes, MAX_UPLOAD_BYTES } from './routes/tasks.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function createApp(db, { uploadDir = process.env.UPLOAD_DIR || 'uploads' } = {}) {
+export function createApp(db, { uploadDir = UPLOAD_DIR } = {}) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '100kb' }));
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'same-origin',
+      'Content-Security-Policy': "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; frame-ancestors 'none'",
+    });
+    next();
+  });
 
   app.use('/api/auth', authRoutes(db));
   app.use('/api/boards', requireUser(db), boardRoutes(db));
@@ -36,6 +46,26 @@ export function createApp(db, { uploadDir = process.env.UPLOAD_DIR || 'uploads' 
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const port = Number(process.env.PORT) || 3000;
-  createApp(openDb()).listen(port, () => console.log(`TaskForge running at http://localhost:${port}`));
+  const db = openDb();
+  // A backup a day, kept for two weeks, checked hourly while the app runs.
+  const dailyBackup = () => {
+    try { backup(db, BACKUP_DIR); } catch (err) { console.error('Backup failed:', err.message); }
+  };
+  if (!DEMO) {
+    dailyBackup();
+    setInterval(dailyBackup, 60 * 60 * 1000).unref();
+  }
+  const server = createApp(db).listen(PORT, process.env.HOST || '127.0.0.1', () => {
+    console.log(`TaskForge${DEMO ? ' demo' : ''} is running at http://localhost:${PORT}`);
+    console.log('Press Ctrl+C to stop.');
+  });
+  server.on('error', (err) => {
+    if (err.code !== 'EADDRINUSE') throw err;
+    console.error(`Port ${PORT} is already in use. TaskForge may already be running: try http://localhost:${PORT}`);
+    process.exit(1);
+  });
+  // Close the database cleanly on Ctrl+C so nothing is left half-written.
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => { server.close(); db.close(); process.exit(0); });
+  }
 }

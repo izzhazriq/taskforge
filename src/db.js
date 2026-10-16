@@ -1,6 +1,9 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { DB_FILE } from './config.js';
 import { DatabaseSync } from 'node:sqlite';
 
-const SCHEMA_VERSION = 3;
+const FIRST_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -95,17 +98,37 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS idx_activity_board ON activity(board_id, id);
 `;
 
-export function openDb(file = process.env.DB_FILE || 'taskforge.db') {
+// Changes to the schema after version 3, the first release. Each entry upgrades
+// a database from the version before it, so existing tasks and files are kept.
+// SCHEMA above always describes the latest version, for brand-new databases.
+const MIGRATIONS = {
+  4: `CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`,
+};
+const SCHEMA_VERSION = Math.max(FIRST_VERSION, ...Object.keys(MIGRATIONS).map(Number));
+
+export function openDb(file = DB_FILE) {
+  if (file !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON;');
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA busy_timeout = 5000;');
 
   const { user_version: version } = db.prepare('PRAGMA user_version').get();
   const hasTables = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`).get();
-  if (hasTables && version < SCHEMA_VERSION) {
-    throw new Error(`${file} was made by an older TaskForge. Delete it, then run "npm run seed" to start fresh.`);
+  if (!hasTables) {
+    db.exec(SCHEMA);
+    for (const sql of Object.values(MIGRATIONS)) db.exec(sql);
+  } else if (version < FIRST_VERSION) {
+    throw new Error(`${file} was made by a TaskForge preview. Move it out of the way to start fresh.`);
+  } else if (version > SCHEMA_VERSION) {
+    throw new Error(`${file} was made by a newer TaskForge. Update the app before opening it.`);
+  } else if (version < SCHEMA_VERSION) {
+    // Keep a copy of the database as it was, in case an upgrade goes wrong.
+    if (file !== ':memory:') db.exec(`VACUUM INTO '${`${file}.v${version}.bak`.replaceAll("'", "''")}'`);
+    transaction(db, () => {
+      for (let v = version + 1; v <= SCHEMA_VERSION; v++) if (MIGRATIONS[v]) db.exec(MIGRATIONS[v]);
+    });
   }
-  db.exec(SCHEMA);
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return db;
 }
@@ -133,4 +156,19 @@ export function createPersonalBoard(db, userId) {
   const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal) VALUES ('Personal', 1)`).run();
   db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, userId);
   return id;
+}
+
+// Copies the database to backups/taskforge-YYYY-MM-DD.db and keeps the newest `keep` copies.
+// VACUUM INTO makes a consistent copy even while the app is running.
+export function backup(db, dir, { keep = 14, force = false } = {}) {
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `taskforge-${new Date().toLocaleDateString('en-CA')}.db`);
+  if (fs.existsSync(file)) {
+    if (!force) return null;
+    fs.rmSync(file);
+  }
+  db.exec(`VACUUM INTO '${file.replaceAll("'", "''")}'`);
+  const old = fs.readdirSync(dir).filter((f) => /^taskforge-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0, -keep);
+  for (const f of old) fs.rmSync(path.join(dir, f));
+  return file;
 }

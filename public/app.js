@@ -12,12 +12,14 @@ const MAX_UPLOAD = 10 * 1024 * 1024;
 const state = {
   me: null,
   boards: [],
-  view: { kind: 'mywork' }, // or { kind: 'board', id }
+  view: { kind: 'mywork' }, // or { kind: 'board', id } or { kind: 'search', q }
   board: null, members: [], tasks: [], // the open board
   myTasks: [],
   task: null, // the task open in the side panel
   onlyMine: false,
+  showAllDone: false,
 };
+const DONE_SHOWN = 10; // the Done column shows the most recent ones until you ask for more
 
 // ---------- Helpers ----------
 async function api(path, { method = 'GET', body, raw, headers = {} } = {}) {
@@ -28,9 +30,27 @@ async function api(path, { method = 'GET', body, raw, headers = {} } = {}) {
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
+  // Signed out somewhere else, or the session ran out: go back to the sign-in page.
+  if (res.status === 401 && state.me && !path.startsWith('/auth/')) {
+    state.me = null;
+    showAuth();
+  }
   if (!res.ok) throw Object.assign(new Error(data.error || 'Something went wrong.'), { status: res.status });
   return data;
 }
+
+// Anything that fails without its own error message shows up in a small note at the bottom.
+function toast(message) {
+  const el = $('toast');
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { el.hidden = true; }, 4000);
+}
+window.addEventListener('unhandledrejection', (e) => {
+  if (e.reason?.status === 401) return;
+  toast(e.reason?.message || 'Something went wrong.');
+});
 
 // Builds elements with text content only, so user-entered text is never parsed as HTML.
 function h(tag, props = {}, ...children) {
@@ -113,15 +133,18 @@ $('logout').onclick = async () => {
 };
 
 function showAuth() {
+  for (const d of document.querySelectorAll('dialog[open]')) d.close();
   $('app-view').hidden = true;
   $('auth-view').hidden = false;
   setAuthMode('login');
+  api('/auth/info').then(({ demo }) => { $('demo-hint').hidden = !demo; }, () => {});
 }
 
 async function enterApp() {
   $('auth-view').hidden = true;
   $('app-view').hidden = false;
   $('me-name').textContent = state.me.name;
+  $('search-input').value = '';
   await loadBoards();
   const saved = localGet('tf-view');
   const id = Number(saved);
@@ -151,18 +174,62 @@ function markNav() {
 $('nav-mywork').onclick = () => showMyWork();
 $('nav-personal').onclick = () => showBoard(personalBoard().id);
 
-async function refresh() {
-  await loadBoards();
-  if (state.view.kind === 'mywork') await showMyWork(); else await showBoard(state.view.id);
+function showView(name) {
+  for (const v of ['mywork', 'board', 'search']) $(`${v}-view`).hidden = v !== name;
 }
+
+async function refresh() {
+  if (!state.me) return;
+  await loadBoards();
+  const v = state.view;
+  if (v.kind === 'mywork') await showMyWork();
+  else if (v.kind === 'search') await showSearch(v.q);
+  else if (state.boards.some((b) => b.id === v.id)) await showBoard(v.id);
+  else await showMyWork(); // the project was deleted or you were removed from it
+}
+
+// ---------- Search ----------
+async function showSearch(q) {
+  state.view = { kind: 'search', q };
+  const { tasks } = await api(`/search?q=${encodeURIComponent(q)}`);
+  if (state.view.kind !== 'search' || state.view.q !== q) return; // a newer search started meanwhile
+  showView('search');
+  markNav();
+  $('search-sub').textContent = tasks.length
+    ? `${tasks.length === 50 ? '50 or more' : tasks.length} task${tasks.length === 1 ? '' : 's'} matching “${q}”`
+    : '';
+  $('search-results').hidden = !tasks.length;
+  $('search-results').replaceChildren(...tasks.map((t) => renderRow(t, { showBoard: true })));
+  if (!tasks.length) $('search-sub').textContent = `Nothing matches “${q}”. Search looks in task names and notes.`;
+}
+let searchTimer;
+$('search-input').oninput = (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  searchTimer = setTimeout(() => (q ? showSearch(q) : state.view.kind === 'search' && showMyWork()), 200);
+};
+$('search-form').onsubmit = (e) => { e.preventDefault(); clearTimeout(searchTimer); const q = $('search-input').value.trim(); if (q) showSearch(q); };
+$('search-input').onkeydown = (e) => { if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); if (state.view.kind === 'search') showMyWork(); } };
+
+// Keyboard: "/" searches, "n" adds a task.
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || !state.me || document.querySelector('dialog[open]')) return;
+  if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+  if (e.key === '/') { e.preventDefault(); $('search-input').focus(); }
+  if (e.key === 'n') {
+    e.preventDefault();
+    if (state.view.kind === 'board') document.querySelector('.column[data-status="todo"] .add-task input')?.focus();
+    else showMyWork().then(() => $('qa-title').focus());
+  }
+});
 
 // ---------- My work ----------
 async function showMyWork() {
   state.view = { kind: 'mywork' };
   localSet('tf-view', 'mywork');
   ({ tasks: state.myTasks } = await api('/me/tasks'));
-  $('mywork-view').hidden = false;
-  $('board-view').hidden = true;
+  if (state.view.kind !== 'mywork') return;
+  showView('mywork');
   markNav();
   renderMyWork();
 }
@@ -209,7 +276,7 @@ function renderMyWork() {
     : [h('p', { class: 'empty-note' }, 'Nothing on your plate. Add a task above, or open a project to pick something up.')]));
 }
 
-function renderRow(t) {
+function renderRow(t, { showBoard = false } = {}) {
   const done = t.status === 'done';
   return h('li', { class: `row-item${done ? ' done' : ''}`, onclick: () => openTask(t.id) },
     h('input', { type: 'checkbox', class: 'tick', checked: done, 'aria-label': `Mark "${t.title}" as done`,
@@ -219,7 +286,7 @@ function renderRow(t) {
     h('span', { class: 'meta' },
       t.step_count ? h('span', {}, `${t.steps_done}/${t.step_count} steps`) : '',
       t.file_count ? h('span', {}, `${t.file_count} file${t.file_count > 1 ? 's' : ''}`) : '',
-      !t.personal && h('span', { class: 'chip' }, t.course_code || t.board_name),
+      (!t.personal || showBoard) && h('span', { class: 'chip' }, t.personal ? 'Personal' : t.course_code || t.board_name),
       t.due_date && h('span', { class: dueClass(t.due_date, t.status) }, dueText(t.due_date, t.status))));
 }
 
@@ -246,12 +313,13 @@ $('quick-add').onsubmit = async (e) => {
 
 // ---------- A project board (or the personal list) ----------
 async function showBoard(id) {
+  if (state.view.kind !== 'board' || state.view.id !== id) state.showAllDone = false;
   state.view = { kind: 'board', id };
   localSet('tf-view', id);
   const data = await api(`/boards/${id}`);
+  if (state.view.kind !== 'board' || state.view.id !== id) return;
   Object.assign(state, { board: data.board, members: data.members, tasks: data.tasks });
-  $('mywork-view').hidden = true;
-  $('board-view').hidden = false;
+  showView('board');
   markNav();
   renderBoard();
 }
@@ -278,12 +346,22 @@ function renderColumn(col) {
   const tasks = state.tasks
     .filter((t) => t.status === col.status && (!state.onlyMine || state.board.personal || t.assignee_id === state.me.id))
     .sort((a, b) => a.position - b.position);
-  const cards = h('div', { class: 'cards' }, tasks.map(renderCard));
+  // Done keeps growing over a semester, so it shows the most recently finished first and hides the rest.
+  let shown = tasks;
+  let hidden = 0;
+  if (col.status === 'done' && !state.showAllDone && tasks.length > DONE_SHOWN) {
+    shown = [...tasks].sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || '') || b.id - a.id).slice(0, DONE_SHOWN)
+      .sort((a, b) => a.position - b.position);
+    hidden = tasks.length - shown.length;
+  }
+  const cards = h('div', { class: 'cards' }, shown.map(renderCard));
   const column = h('section', { class: 'column', 'data-status': col.status, 'aria-label': col.label },
     h('div', { class: 'column-head' },
       h('span', { class: 'dot', style: `background:${col.color}` }), col.label,
       h('span', { class: 'count' }, String(tasks.length))),
     cards,
+    hidden > 0 && h('button', { class: 'link show-older', onclick: () => { state.showAllDone = true; renderBoard(); } },
+      `Show ${hidden} older`),
     canWork(state.board.role) && col.status === 'todo' && h('form', { class: 'add-task', onsubmit: addTask },
       h('input', { placeholder: 'Add a task', 'aria-label': 'Add a task', maxlength: 140 }),
       h('button', { class: 'btn', type: 'submit' }, 'Add')));
@@ -571,6 +649,37 @@ $('pf-delete').onclick = confirmTwice($('pf-delete'), 'Delete project', async ()
   await loadBoards();
   await showMyWork();
 });
+
+// ---------- Account ----------
+function accountMessage(error, saved = '') {
+  $('acc-error').textContent = error;
+  $('acc-saved').textContent = saved;
+}
+$('me-name').onclick = () => {
+  $('acc-name').value = state.me.name;
+  $('acc-email').textContent = `Signed in as ${state.me.email}`;
+  $('password-form').reset();
+  accountMessage('');
+  $('account-dialog').showModal();
+};
+$('acc-close').onclick = () => $('account-dialog').close();
+$('name-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    ({ user: state.me } = await api('/auth/me', { method: 'PATCH', body: { name: $('acc-name').value } }));
+    $('me-name').textContent = state.me.name;
+    accountMessage('', 'Name saved.');
+    refresh();
+  } catch (err) { accountMessage(err.message); }
+};
+$('password-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await api('/auth/password', { method: 'POST', body: { currentPassword: $('acc-current').value, newPassword: $('acc-new').value } });
+    $('password-form').reset();
+    accountMessage('', 'Password changed. Other browsers have been signed out.');
+  } catch (err) { accountMessage(err.message); }
+};
 
 // ---------- Team and contributions ----------
 function openPanel(title, ...content) {

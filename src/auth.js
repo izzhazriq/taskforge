@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 export const SESSION_COOKIE = 'tf_session';
-const SESSION_DAYS = 7;
+const SESSION_DAYS = 30;
 const ROLE_RANK = { supervisor: 1, member: 2, owner: 3 };
 export const ROLE_LABEL = { owner: 'group leader', member: 'team member', supervisor: 'supervisor' };
 
