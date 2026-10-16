@@ -146,6 +146,25 @@ const MIGRATIONS = {
       FROM steps s JOIN tasks t ON t.id = s.task_id ORDER BY s.task_id, s.position;
     DROP TABLE steps;
   `,
+
+  // Account types, Google sign-in, a fuller profile and GitHub links.
+  6: `
+    -- student: school and personal projects. personal: personal projects only.
+    -- supervisor: only ever a supervisor on school projects.
+    ALTER TABLE users ADD COLUMN account_type TEXT NOT NULL DEFAULT 'student' CHECK (account_type IN ('student', 'personal', 'supervisor'));
+    ALTER TABLE users ADD COLUMN google_id TEXT;
+    CREATE UNIQUE INDEX idx_users_google ON users(google_id) WHERE google_id IS NOT NULL;
+    ALTER TABLE users ADD COLUMN job_title TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN department TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN organization TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN location TEXT NOT NULL DEFAULT '';
+    ALTER TABLE users ADD COLUMN cover TEXT NOT NULL DEFAULT 'ember';
+    ALTER TABLE users ADD COLUMN github_token TEXT; -- a personal access token, for private repositories
+    ALTER TABLE users ADD COLUMN github_login TEXT NOT NULL DEFAULT '';
+
+    ALTER TABLE boards ADD COLUMN github_repo TEXT NOT NULL DEFAULT ''; -- owner/name
+    ALTER TABLE tasks ADD COLUMN github_issue INTEGER; -- the issue number a task was made from
+  `,
 };
 const SCHEMA_VERSION = Math.max(FIRST_VERSION, ...Object.keys(MIGRATIONS).map(Number));
 
@@ -195,6 +214,7 @@ export function logActivity(db, boardId, userId, action, detail) {
 }
 
 // Every account gets one personal board for its own tasks.
+// Supervisors get one too, for their own to-dos, though they never create projects.
 export function createPersonalBoard(db, userId) {
   const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal, kind) VALUES ('Personal', 1, 'personal')`).run();
   db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, userId);

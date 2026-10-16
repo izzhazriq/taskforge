@@ -23,7 +23,9 @@ export function hashPassword(password) {
   return `${salt.toString('hex')}:${hash.toString('hex')}`;
 }
 
+// Accounts made with Google have no password until they set one.
 export function verifyPassword(password, stored) {
+  if (!stored) return false;
   const [saltHex, hashHex] = stored.split(':');
   const hash = crypto.scryptSync(password, Buffer.from(saltHex, 'hex'), 64);
   return crypto.timingSafeEqual(hash, Buffer.from(hashHex, 'hex'));
@@ -50,7 +52,7 @@ export function destroySession(db, req, res) {
   res.clearCookie(SESSION_COOKIE);
 }
 
-function readCookie(req, name) {
+export function readCookie(req, name) {
   const header = req.headers.cookie || '';
   for (const part of header.split(';')) {
     const [key, ...rest] = part.trim().split('=');
@@ -59,9 +61,15 @@ function readCookie(req, name) {
   return null;
 }
 
+// What the app knows about the signed-in person. Secrets (password, GitHub token) only show up as yes/no.
+export const userSql = (alias) => `${alias}.id, ${alias}.email, ${alias}.name, ${alias}.bio, ${avatarSql(alias)} AS avatar_url,
+  ${alias}.account_type, ${alias}.job_title, ${alias}.department, ${alias}.organization, ${alias}.location, ${alias}.cover,
+  ${alias}.password_hash != '' AS has_password, ${alias}.google_id IS NOT NULL AS has_google,
+  ${alias}.github_token IS NOT NULL AS has_github_token, ${alias}.github_login, ${alias}.created_at`;
+
 export function requireUser(db) {
   const findSession = db.prepare(`
-    SELECT u.id, u.email, u.name, u.bio, ${avatarSql('u')} AS avatar_url FROM sessions s
+    SELECT ${userSql('u')} FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > datetime('now')`);
   return (req, res, next) => {

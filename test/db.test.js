@@ -22,7 +22,8 @@ test('a database from the first release is upgraded, keeping its tasks and a cop
   v3.close();
 
   const upgraded = openDb(file);
-  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 6);
+  assert.equal(upgraded.prepare('SELECT account_type FROM users').get().account_type, 'student', 'existing accounts become student accounts');
   const tasks = upgraded.prepare('SELECT id, title, parent_id, status, assignee_id, completed_at FROM tasks ORDER BY id').all();
   assert.equal(tasks[0].title, 'Keep me');
   assert.deepEqual(tasks.slice(1).map((t) => [t.title, t.parent_id, t.status, t.assignee_id]),

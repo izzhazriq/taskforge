@@ -21,20 +21,21 @@ const semStart = monday.toISOString().slice(0, 10);
 const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 
 const people = {
-  demo: ['demo@taskforge.dev', 'Demo Student'],
-  aina: ['aina@taskforge.dev', 'Nur Aina'],
-  farid: ['farid@taskforge.dev', 'Farid Hakim'],
-  mei: ['mei@taskforge.dev', 'Tan Mei Ling'],
-  supervisor: ['dr.nurul@taskforge.dev', 'Dr. Nurul Huda'],
+  demo: ['demo@taskforge.dev', 'Demo Student', 'student', 'Computer Science student'],
+  aina: ['aina@taskforge.dev', 'Nur Aina', 'student', 'Computer Science student'],
+  farid: ['farid@taskforge.dev', 'Farid Hakim', 'student', 'Computer Science student'],
+  mei: ['mei@taskforge.dev', 'Tan Mei Ling', 'student', 'Computer Science student'],
+  supervisor: ['dr.nurul@taskforge.dev', 'Dr. Nurul Huda', 'supervisor', 'Senior Lecturer'],
 };
 
 transaction(db, () => {
   const id = {};
-  for (const [k, [email, name]] of Object.entries(people)) {
+  for (const [k, [email, name, type, title]] of Object.entries(people)) {
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
     if (existing) { id[k] = existing.id; continue; }
-    id[k] = db.prepare('INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)')
-      .run(email, name, hashPassword('demo1234')).lastInsertRowid;
+    id[k] = db.prepare(`INSERT INTO users (email, name, password_hash, account_type, job_title, department, organization, location)
+      VALUES (?, ?, ?, ?, ?, 'Faculty of Computer and Mathematical Sciences', 'UiTM Shah Alam', 'Shah Alam, Selangor')`)
+      .run(email, name, hashPassword('demo1234'), type, title).lastInsertRowid;
     createPersonalBoard(db, id[k]);
   }
   const personal = db.prepare(`SELECT b.id FROM boards b JOIN memberships m ON m.board_id = b.id WHERE b.personal = 1 AND m.user_id = ?`);
@@ -92,8 +93,8 @@ transaction(db, () => {
     'Submit the report and slides on the learning portal', dueForWeek(semStart, 6), grp0);
 
   // ----- A personal project -----
-  const site = db.prepare(`INSERT INTO boards (name, kind, description, goal) VALUES (?, 'personal', ?, ?)`).run(
-    'Portfolio website', 'My personal site with my projects, experience and a dev log.', 'Launch izzhazriq.my').lastInsertRowid;
+  const site = db.prepare(`INSERT INTO boards (name, kind, description, goal, github_repo) VALUES (?, 'personal', ?, ?, ?)`).run(
+    'Portfolio website', 'My personal site with my projects, experience and a dev log.', 'Launch izzhazriq.my', 'izzhazriq/izzhazriq').lastInsertRowid;
   db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(site, id.demo);
   const home = createTask(db, site, id.demo, { title: 'Build the home page', assigneeId: id.demo, dueDate: day(4), status: 'doing' });
   for (const title of ['Hero section', 'Featured projects', 'Contact links']) createTask(db, site, id.demo, { title, assigneeId: id.demo, parentId: home });

@@ -2,18 +2,21 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb, backup } from './db.js';
-import { DEMO, UPLOAD_DIR, BACKUP_DIR, PORT } from './config.js';
+import { DEMO, UPLOAD_DIR, BACKUP_DIR, PORT, GOOGLE } from './config.js';
 import { requireUser } from './auth.js';
 import { authRoutes } from './routes/auth.js';
 import { boardRoutes, documentRoutes } from './routes/boards.js';
 import { userRoutes } from './routes/users.js';
 import { taskRoutes } from './routes/tasks.js';
 import { MAX_UPLOAD_BYTES, MAX_AVATAR_BYTES } from './files.js';
+import { githubClient } from './github.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function createApp(db, { uploadDir = UPLOAD_DIR } = {}) {
+// `google` turns on Sign in with Google. `fetch` reaches Google and GitHub; tests swap it for a fake.
+export function createApp(db, { uploadDir = UPLOAD_DIR, google = null, fetch = globalThis.fetch } = {}) {
   const app = express();
+  const github = githubClient({ fetch });
   app.disable('x-powered-by');
   app.use(express.json({ limit: '100kb' }));
   app.use((req, res, next) => {
@@ -26,10 +29,10 @@ export function createApp(db, { uploadDir = UPLOAD_DIR } = {}) {
     next();
   });
 
-  app.use('/api/auth', authRoutes(db));
-  app.use('/api/boards', requireUser(db), boardRoutes(db, { uploadDir }));
+  app.use('/api/auth', authRoutes(db, { google, fetch }));
+  app.use('/api/boards', requireUser(db), boardRoutes(db, { uploadDir, github }));
   app.use('/api/documents', requireUser(db), documentRoutes(db, { uploadDir }));
-  app.use('/api', requireUser(db), userRoutes(db, { uploadDir }));
+  app.use('/api', requireUser(db), userRoutes(db, { uploadDir, github }));
   app.use('/api', requireUser(db), taskRoutes(db, { uploadDir }));
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
@@ -60,7 +63,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     dailyBackup();
     setInterval(dailyBackup, 60 * 60 * 1000).unref();
   }
-  const server = createApp(db).listen(PORT, process.env.HOST || '127.0.0.1', () => {
+  const server = createApp(db, { google: GOOGLE }).listen(PORT, process.env.HOST || '127.0.0.1', () => {
     console.log(`TaskForge${DEMO ? ' demo' : ''} is running at http://localhost:${PORT}`);
     console.log('Press Ctrl+C to stop.');
   });
