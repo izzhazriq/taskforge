@@ -69,7 +69,7 @@
       </div>
       <div class="space-tag" id="space-tag" hidden></div>
       <form id="search-form" class="search" role="search">
-        <input id="search-input" type="search" placeholder="Search tasks" aria-label="Search tasks" maxlength="100" autocomplete="off">
+        <input id="search-input" type="search" placeholder="Search tasks or keys" aria-label="Search tasks or keys" maxlength="100" autocomplete="off">
       </form>
       <nav class="nav">
         <button id="nav-mywork" class="nav-item"><span>My work</span><span class="badge" id="mywork-badge" hidden></span></button>
@@ -332,7 +332,8 @@
 
       <section>
         <h4>Notes</h4>
-        <textarea id="t-notes" rows="3" maxlength="8000" placeholder="Lecturer’s instructions, links, anything useful"></textarea>
+        <textarea id="t-notes" rows="3" maxlength="8000" placeholder="Lecturer’s instructions, links, anything useful. Write a key like ABC-12 to link another task."></textarea>
+        <p class="mentions" id="t-mentions" hidden></p>
       </section>
       <section id="t-subtasks-section">
         <h4>Subtasks <span class="muted" id="t-sub-count"></span></h4>
@@ -384,6 +385,7 @@
       <label id="pf-name-field">Project name<input id="pf-name" maxlength="80" placeholder="Database group assignment"></label>
       <label id="pf-course-field"><span>Course code <small>(optional)</small></span><input id="pf-course" maxlength="20" placeholder="CSC584"></label>
       <label id="pf-start-field"><span>Week 1 starts on <small>(optional)</small></span><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
+      <label id="pf-key-field"><span>Key</span><input id="pf-key" maxlength="10" placeholder="MBSW" spellcheck="false" autocomplete="off"><small>Starts every task’s key, like MBSW-12. 2 to 10 letters or digits. Changing it changes all the keys, so old mentions stop linking.</small></label>
       <label id="pf-github-field"><span>GitHub repository <small>(optional)</small></span><input id="pf-github" maxlength="200" placeholder="izzhazriq/medina-store or its link" spellcheck="false" autocomplete="off"><small>Shows its commits, pull requests and issues in the project’s GitHub section.</small></label>
       <label id="pf-template-field">Start with
         <select id="pf-template">

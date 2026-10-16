@@ -13,8 +13,15 @@ export function parseRepo(input) {
   return `${m[1]}/${m[2]}`;
 }
 
-// Task keys like TF-12 in commit messages link the commit to task 12.
-export const taskKeys = (message) => [...new Set([...message.matchAll(/\bTF-(\d{1,9})\b/gi)].map((m) => Number(m[1])))];
+// Task keys like MBSW-12 in a commit message, as { key: 'MBSW', number: 12 }, once each.
+export function taskKeys(message) {
+  const seen = new Map();
+  for (const m of message.matchAll(/\b([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})\b/g)) {
+    const key = m[1].toUpperCase();
+    seen.set(`${key}-${Number(m[2])}`, { key, number: Number(m[2]) });
+  }
+  return [...seen.values()];
+}
 
 const CACHE_MS = 60 * 1000;
 

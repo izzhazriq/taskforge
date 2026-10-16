@@ -314,6 +314,34 @@ async function showSupervising() {
   }) : [h('li', { class: 'empty-note' }, 'No projects yet. When a student adds you as their supervisor, their project shows up here.')]));
 }
 
+// ---------- Task keys, like MBSW-12 ----------
+// Only keys of projects you're in become links, so things like "UTF-8" stay plain text.
+const KEY_RE = /\b([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})\b/g;
+const myKeys = () => new Set(state.boards.map((b) => b.key));
+const keysIn = (text) => [...String(text || '').matchAll(KEY_RE)]
+  .map((m) => `${m[1].toUpperCase()}-${Number(m[2])}`).filter((k) => myKeys().has(k.split('-')[0]));
+async function openByKey(key) {
+  try {
+    const { task } = await api(`/tasks/by-key/${encodeURIComponent(key)}`);
+    await openTask(task.id);
+  } catch (err) { toast(err.message); }
+}
+const keyLink = (key) => h('button', { class: 'chip task-chip', onclick: (e) => { e.stopPropagation(); openByKey(key); }, title: `Open ${key}` }, key);
+// Text with each key in it turned into a link.
+function withKeys(text) {
+  const keys = myKeys();
+  const out = [];
+  let last = 0;
+  for (const m of String(text).matchAll(KEY_RE)) {
+    const prefix = m[1].toUpperCase();
+    if (!keys.has(prefix)) continue;
+    out.push(text.slice(last, m.index), h('button', { class: 'key-link', onclick: (e) => { e.stopPropagation(); openByKey(`${prefix}-${Number(m[2])}`); } }, m[0]));
+    last = m.index + m[0].length;
+  }
+  out.push(text.slice(last));
+  return out;
+}
+
 // ---------- Navigation ----------
 async function loadBoards() {
   ({ boards: state.boards } = await api('/boards'));
@@ -478,6 +506,7 @@ function renderRow(t, { showBoard = false } = {}) {
       t.parent_title && h('small', { class: 'parent' }, `${t.parent_title} ›`),
       t.title, t.important ? h('span', { class: 'star-mark', title: 'Important' }, ' ★') : ''),
     h('span', { class: 'meta' },
+      h('span', { class: 'key' }, t.key),
       t.subtask_count ? h('span', {}, `${t.subtasks_done}/${t.subtask_count} subtasks`) : '',
       t.file_count ? h('span', {}, `${t.file_count} file${t.file_count > 1 ? 's' : ''}`) : '',
       (!t.personal || showBoard) && h('span', { class: `chip space-${t.kind || 'school'}` }, t.personal ? 'My to-dos' : t.course_code || t.board_name),
@@ -557,7 +586,7 @@ function renderBoard() {
   const week = b.kind === 'school' ? weekOf(today(), b.sem_start) : null;
   const team = state.members.filter((m) => m.role !== 'supervisor').length;
   const bits = personal ? ['Personal · only you can see this list']
-    : [b.kind === 'personal' ? 'Personal project' : `School${b.course_code ? ` · ${b.course_code}` : ''}`,
+    : [b.kind === 'personal' ? 'Personal project' : `School${b.course_code ? ` · ${b.course_code}` : ''}`, `key ${b.key}`,
       `${team} ${team === 1 ? 'person' : 'people'}`, `you are ${roleName(b.role, b.kind).toLowerCase()}`];
   $('pin-toggle').hidden = personal;
   $('pin-toggle').setAttribute('aria-pressed', Boolean(b.pinned));
@@ -624,7 +653,8 @@ function renderCard(t) {
     onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTask(t.id); } },
   },
     h('span', { class: 'card-title' }, t.title, t.important ? h('span', { class: 'star-mark' }, ' ★') : ''),
-    (t.due_date || who || extras) && h('span', { class: 'card-meta' },
+    h('span', { class: 'card-meta' },
+      h('span', { class: 'key' }, t.key),
       t.due_date && h('span', { class: dueClass(t.due_date, t.status) }, dueText(t.due_date, t.status)),
       extras && h('span', {}, extras),
       h('span', { class: 'spacer' }),
@@ -810,7 +840,7 @@ function renderGithubLink(panel) {
   const error = h('p', { class: 'error', role: 'alert' });
   panel.replaceChildren(h('section', { class: 'box github-empty' },
     h('h3', {}, 'Link a GitHub repository'),
-    h('p', { class: 'muted' }, 'See the project’s commits, pull requests and issues here, turn issues into tasks, and link commits to tasks by writing the task’s key, like TF-12, in the commit message.'),
+    h('p', { class: 'muted' }, `See the project’s commits, pull requests and issues here, turn issues into tasks, and link commits to tasks by writing the task’s key, like ${b.key}-12, in the commit message.`),
     owner
       ? h('form', { class: 'inline-form', onsubmit: async (e) => {
           e.preventDefault();
@@ -826,7 +856,7 @@ function renderGithubLink(panel) {
 function renderGithub(panel, g) {
   const b = state.board;
   const edit = canWork(b.role);
-  const taskChips = (tasks) => tasks.map((t) => h('button', { class: `chip task-chip ${t.status}`, onclick: () => openTask(t.id), title: t.title }, `TF-${t.id}`));
+  const taskChips = (tasks) => tasks.map((t) => h('button', { class: `chip task-chip ${t.status}`, onclick: () => openTask(t.id), title: t.title }, t.key));
   const repo = g.repo;
   const head = h('section', { class: 'box repo-head' },
     h('div', { class: 'box-head' },
@@ -838,7 +868,7 @@ function renderGithub(panel, g) {
     h('div', { class: 'stat-row four' },
       stat(g.commits_this_week, 'commits this week'), stat(repo.open_pulls, 'open pull requests'), stat(repo.open_issues, 'open issues'),
       h('div', { class: 'stat' }, h('span', { class: 'stat-num small' }, repo.pushed_at ? ago(repo.pushed_at) : '—'), h('span', { class: 'stat-label' }, `last push · ${repo.default_branch}`))),
-    h('p', { class: 'muted small-note' }, 'Tip: write a task’s key, like ', h('code', {}, 'TF-12'), ', in a commit message or pull request title to link it to that task.'));
+    h('p', { class: 'muted small-note' }, 'Tip: write a task’s key, like ', h('code', {}, `${b.key}-12`), ', in a commit message or pull request title to link it to that task.'));
 
   const list = (title, items, row, empty) => h('section', { class: 'box gh-list' },
     h('h3', {}, title, h('span', { class: 'muted' }, ` ${items.length}`)),
@@ -847,18 +877,18 @@ function renderGithub(panel, g) {
 
   const commits = list('Recent commits', g.commits, (c) => h('li', {},
     h('a', { class: 'sha', href: c.url, target: '_blank', rel: 'noopener' }, c.sha),
-    h('span', { class: 'gh-title' }, c.message),
+    h('span', { class: 'gh-title' }, withKeys(c.message)),
     h('span', { class: 'gh-meta' }, ...taskChips(c.tasks), `${c.author} · `, when(c.date))), 'No commits yet.');
   const pulls = list('Open pull requests', g.pulls, (p) => h('li', {},
     h('a', { class: 'sha', href: p.url, target: '_blank', rel: 'noopener' }, `#${p.number}`),
-    h('span', { class: 'gh-title' }, p.title, p.draft ? h('span', { class: 'chip' }, 'Draft') : ''),
+    h('span', { class: 'gh-title' }, withKeys(p.title), p.draft ? h('span', { class: 'chip' }, 'Draft') : ''),
     h('span', { class: 'gh-meta' }, ...taskChips(p.tasks), `${p.author} · `, when(p.created_at))), 'No open pull requests.');
   const issues = list('Open issues', g.issues, (i) => h('li', {},
     h('a', { class: 'sha', href: i.url, target: '_blank', rel: 'noopener' }, `#${i.number}`),
     h('span', { class: 'gh-title' }, i.title, ...i.labels.map((l) => h('span', { class: 'chip' }, l))),
     h('span', { class: 'gh-meta' },
       i.task_id
-        ? h('button', { class: 'chip task-chip', onclick: () => openTask(i.task_id) }, `TF-${i.task_id}`)
+        ? h('button', { class: 'chip task-chip', onclick: () => openTask(i.task_id) }, i.task_key)
         : edit && h('button', { class: 'link', onclick: async () => {
             const { task } = await api(`/boards/${b.id}/github/issues/${i.number}`, { method: 'POST' });
             await loadGithub();
@@ -1021,10 +1051,10 @@ function renderTask() {
   $('task-panel').classList.toggle('is-subtask', isSub);
   $('t-where').textContent = t.personal ? 'Personal' : [t.course_code, t.board_name].filter(Boolean).join(' · ');
   $('t-kind').hidden = !isSub;
-  // The key links commits to this task when the project has a GitHub repository.
-  $('t-key').hidden = !t.github_repo;
-  $('t-key').textContent = `TF-${t.id}`;
-  $('t-key').title = `Write TF-${t.id} in a commit message to link it here. Click to copy.`;
+  // The key, like MBSW-12, can be written in comments, notes and commit messages to link here.
+  $('t-key').hidden = false;
+  $('t-key').textContent = t.key;
+  $('t-key').title = `Copy ${t.key}. Write it in a comment, a note${t.github_repo ? ' or a commit message' : ''} to link to this task.`;
   $('t-parent').hidden = !isSub;
   $('t-parent').replaceChildren('← Back to ', h('b', {}, t.parent_title || 'the task'));
   $('t-done').setAttribute('aria-label', isSub ? 'Mark subtask as done' : 'Mark as done');
@@ -1036,6 +1066,7 @@ function renderTask() {
   const week = t.kind === 'school' ? weekOf(t.due_date, t.sem_start) : null;
   $('t-week').textContent = [t.due_date && t.status !== 'done' ? dueText(t.due_date) : '', week ? `Week ${week}` : ''].filter(Boolean).join(' · ');
   $('t-notes').value = t.notes;
+  renderMentions(t.notes);
 
   $('t-assignee-field').hidden = Boolean(t.personal);
   $('t-assignee').replaceChildren(h('option', { value: '' }, 'Nobody yet'),
@@ -1058,7 +1089,7 @@ function renderTask() {
       h('input', { type: 'checkbox', class: 'tick', checked: x.status === 'done', disabled: panelRole === null, 'aria-label': `Mark "${x.title}" as done`,
         onchange: (e) => save(() => api(`/tasks/${x.id}`, { method: 'PATCH', body: { status: e.target.checked ? 'done' : 'todo' } })) }),
       h('button', { class: 'sub-open', onclick: () => openTask(x.id) },
-        h('span', { class: 'sub-title' }, x.title),
+        h('span', { class: 'sub-title' }, h('span', { class: 'key' }, x.key), x.title),
         h('span', { class: 'sub-meta' },
           x.status === 'doing' && h('span', { class: 'chip doing' }, 'Doing'),
           x.due_date && h('span', { class: dueClass(x.due_date, x.status) }, dueText(x.due_date, x.status)),
@@ -1085,7 +1116,7 @@ function renderTask() {
       h('div', { class: 'who' }, c.user_name || 'Someone', h('time', { datetime: c.created_at }, fmtTime(c.created_at)),
         (c.user_id === state.me.id || panelRole === 'owner') &&
           h('button', { class: 'link', onclick: () => save(() => api(`/comments/${c.id}`, { method: 'DELETE' })) }, 'Delete')),
-      h('p', {}, c.body)))));
+      h('p', {}, withKeys(c.body))))));
 
   $('t-delete').hidden = !edit;
   $('t-delete').dataset.armed = '';
@@ -1116,6 +1147,15 @@ $('t-important').onclick = () => patch({ important: !state.task.important });
 $('t-status').onclick = (e) => { const s = e.target.dataset.status; if (s && s !== state.task.status) patch({ status: s }); };
 $('t-due').onchange = (e) => patch({ dueDate: e.target.value || null });
 $('t-notes').onchange = (e) => patch({ notes: e.target.value });
+$('t-notes').oninput = (e) => renderMentions(e.target.value);
+
+// Keys mentioned in the notes show underneath as links, like Jira's linked issues.
+function renderMentions(text) {
+  const own = state.task?.key;
+  const keys = [...new Set(keysIn(text).filter((k) => k !== own))];
+  $('t-mentions').hidden = !keys.length;
+  $('t-mentions').replaceChildren('Mentions ', ...keys.map((k) => keyLink(k)));
+}
 $('t-assignee').onchange = (e) => patch({ assigneeId: e.target.value ? Number(e.target.value) : null });
 
 $('t-sub-form').onsubmit = (e) => {
@@ -1182,7 +1222,7 @@ $('t-delete').onclick = confirmTwice($('t-delete'), async () => {
 });
 $('t-close').onclick = () => $('task-panel').close();
 $('t-key').onclick = async () => {
-  try { await navigator.clipboard.writeText(`TF-${state.task.id}`); toast(`Copied TF-${state.task.id}`); } catch { /* clipboard blocked */ }
+  try { await navigator.clipboard.writeText(state.task.key); toast(`Copied ${state.task.key}`); } catch { /* clipboard blocked */ }
 };
 $('task-panel').addEventListener('close', () => { state.task = null; refresh(); });
 // Clicking the dimmed area beside the panel closes it.
@@ -1212,6 +1252,9 @@ function openProjectDialog(board) {
   $('pf-title').textContent = personal ? 'Semester week' : board ? 'Project settings' : 'New project';
   $('pf-submit').textContent = board ? 'Save' : 'Create';
   $('pf-name').value = board?.name ?? '';
+  $('pf-key').value = board?.key ?? '';
+  $('pf-key').dataset.touched = board ? 'true' : '';
+  $('pf-key-field').hidden = personal;
   $('pf-course').value = board?.course_code ?? '';
   $('pf-start').value = board?.sem_start ?? personalBoard()?.sem_start ?? '';
   $('pf-template').value = 'blank';
@@ -1228,13 +1271,25 @@ function openProjectDialog(board) {
   $('project-dialog').showModal();
 }
 $('new-project').onclick = () => openProjectDialog(null);
+// The key follows the name, like Jira, until you type your own.
+function suggestKey(name) {
+  const words = name.toUpperCase().normalize('NFKD').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  let key = words.length > 1 ? words.map((w) => w[0]).join('').slice(0, 6) : (words[0] || '').slice(0, 3);
+  if (key && !/^[A-Z]/.test(key)) key = `P${key}`;
+  return key.length === 1 ? `${key}X` : key.slice(0, 6);
+}
+$('pf-name').addEventListener('input', () => { if (!$('pf-key').dataset.touched) $('pf-key').value = suggestKey($('pf-name').value); });
+$('pf-key').addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  e.target.dataset.touched = e.target.value ? 'true' : '';
+});
 $('show-settings').onclick = () => openProjectDialog(state.board);
 $('pf-cancel').onclick = () => $('project-dialog').close();
 $('project-form').onsubmit = async (e) => {
   e.preventDefault();
   const body = editing?.personal
     ? { sem_start: $('pf-start').value || null }
-    : { name: $('pf-name').value, kind: formKind, course_code: $('pf-course').value, sem_start: $('pf-start').value || null, github_repo: $('pf-github').value };
+    : { name: $('pf-name').value, key: $('pf-key').value, kind: formKind, course_code: $('pf-course').value, sem_start: $('pf-start').value || null, github_repo: $('pf-github').value };
   try {
     if (editing) {
       await api(`/boards/${editing.id}`, { method: 'PATCH', body });

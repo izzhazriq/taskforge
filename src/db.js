@@ -165,7 +165,32 @@ const MIGRATIONS = {
     ALTER TABLE boards ADD COLUMN github_repo TEXT NOT NULL DEFAULT ''; -- owner/name
     ALTER TABLE tasks ADD COLUMN github_issue INTEGER; -- the issue number a task was made from
   `,
+
+  // Jira-style keys: each project gets a short key (MBSW) and each task a number in it (MBSW-12).
+  7: (db) => {
+    db.exec(`
+      ALTER TABLE boards ADD COLUMN key TEXT NOT NULL DEFAULT '';
+      ALTER TABLE boards ADD COLUMN next_number INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE tasks ADD COLUMN number INTEGER;
+      UPDATE tasks SET number = (SELECT COUNT(*) FROM tasks o WHERE o.board_id = tasks.board_id AND o.id <= tasks.id);
+      UPDATE boards SET next_number = 1 + (SELECT COUNT(*) FROM tasks t WHERE t.board_id = boards.id);
+      CREATE UNIQUE INDEX idx_tasks_number ON tasks(board_id, number);
+    `);
+    const setKey = db.prepare('UPDATE boards SET key = ? WHERE id = ?');
+    for (const b of db.prepare('SELECT id, name, personal FROM boards').all()) setKey.run(b.personal ? 'TODO' : suggestKey(b.name), b.id);
+  },
 };
+
+// A project key from its name: the first letters of each word ("Medina Brand Store Website" → MBSW),
+// or the start of a one-word name ("Portfolio" → POR). Letters and digits only, 2 to 6 long.
+export function suggestKey(name) {
+  const words = String(name).toUpperCase().normalize('NFKD').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  let key = words.length > 1 ? words.map((w) => w[0]).join('').slice(0, 6) : (words[0] || '').slice(0, 3);
+  if (!/^[A-Z]/.test(key)) key = `P${key}`;
+  return key.length >= 2 ? key.slice(0, 6) : `${key}X`;
+}
+
+const runMigration = (db, m) => (typeof m === 'function' ? m(db) : db.exec(m));
 const SCHEMA_VERSION = Math.max(FIRST_VERSION, ...Object.keys(MIGRATIONS).map(Number));
 
 export function openDb(file = DB_FILE) {
@@ -179,7 +204,7 @@ export function openDb(file = DB_FILE) {
   const hasTables = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`).get();
   if (!hasTables) {
     db.exec(BASE_SCHEMA);
-    for (const sql of Object.values(MIGRATIONS)) db.exec(sql);
+    for (const m of Object.values(MIGRATIONS)) runMigration(db, m);
   } else if (version < FIRST_VERSION) {
     throw new Error(`${file} was made by a TaskForge preview. Move it out of the way to start fresh.`);
   } else if (version > SCHEMA_VERSION) {
@@ -188,7 +213,7 @@ export function openDb(file = DB_FILE) {
     // Keep a copy of the database as it was, in case an upgrade goes wrong.
     if (file !== ':memory:') db.exec(`VACUUM INTO '${`${file}.v${version}.bak`.replaceAll("'", "''")}'`);
     transaction(db, () => {
-      for (let v = version + 1; v <= SCHEMA_VERSION; v++) if (MIGRATIONS[v]) db.exec(MIGRATIONS[v]);
+      for (let v = version + 1; v <= SCHEMA_VERSION; v++) if (MIGRATIONS[v]) runMigration(db, MIGRATIONS[v]);
     });
   }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
@@ -216,7 +241,7 @@ export function logActivity(db, boardId, userId, action, detail) {
 // Every account gets one personal board for its own tasks.
 // Supervisors get one too, for their own to-dos, though they never create projects.
 export function createPersonalBoard(db, userId) {
-  const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal, kind) VALUES ('Personal', 1, 'personal')`).run();
+  const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal, kind, key) VALUES ('Personal', 1, 'personal', 'TODO')`).run();
   db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, userId);
   return id;
 }
