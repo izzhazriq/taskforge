@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskForge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Inter+Tight:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Signed-out view -->
+  <main id="auth-view" class="auth" hidden>
+    <div class="auth-card">
+      <h1 class="logo">Task<span>Forge</span></h1>
+      <p class="muted">Your assignments, FYP and group work in one list.</p>
+      <div class="seg" role="tablist">
+        <button id="tab-login" role="tab" aria-selected="true">Log in</button>
+        <button id="tab-register" role="tab" aria-selected="false">Sign up</button>
+      </div>
+      <form id="auth-form" novalidate>
+        <label id="name-field" hidden>Name<input id="auth-name" autocomplete="name"></label>
+        <label>Email<input id="auth-email" type="email" autocomplete="email" required placeholder="you@student.uni.edu.my"></label>
+        <label>Password<input id="auth-password" type="password" autocomplete="current-password" required minlength="8"></label>
+        <p class="error" id="auth-error" role="alert"></p>
+        <button class="btn primary" id="auth-submit" type="submit">Log in</button>
+      </form>
+      <p class="hint">Ran <code>npm run seed</code>? Log in as <code>demo@taskforge.dev</code> / <code>demo1234</code>.</p>
+    </div>
+  </main>
+
+  <!-- Signed-in view -->
+  <div id="app-view" class="app" hidden>
+    <aside class="sidebar">
+      <div class="logo small">Task<span>Forge</span></div>
+      <nav class="nav">
+        <button id="nav-mywork" class="nav-item"><span>My work</span><span class="badge" id="mywork-badge" hidden></span></button>
+        <button id="nav-personal" class="nav-item"><span>Personal</span></button>
+        <div class="label">Projects</div>
+        <div id="project-list" class="nav"></div>
+        <button class="nav-item add" id="new-project">+ New project</button>
+      </nav>
+      <div class="me">
+        <span id="me-name"></span>
+        <button class="link" id="logout">Log out</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <!-- My work -->
+      <section id="mywork-view" hidden>
+        <header class="page-head">
+          <div>
+            <div class="sub" id="today-line"></div>
+            <h2>My work</h2>
+          </div>
+        </header>
+        <form id="quick-add" class="quick-add">
+          <input id="qa-title" placeholder="Add a task, like “Submit lab report”" aria-label="New task" maxlength="140" required>
+          <input id="qa-due" type="date" aria-label="Due date">
+          <select id="qa-where" aria-label="Where"></select>
+          <button class="btn primary" type="submit">Add</button>
+        </form>
+        <div id="mywork-groups" class="groups"></div>
+      </section>
+
+      <!-- A project, or the personal list -->
+      <section id="board-view" hidden>
+        <header class="page-head">
+          <div>
+            <div class="sub" id="board-sub"></div>
+            <h2 id="board-name"></h2>
+          </div>
+          <div class="head-actions">
+            <label class="check" id="mine-toggle"><input id="filter-mine" type="checkbox"> Only my tasks</label>
+            <button class="btn" id="show-team">Team</button>
+            <button class="btn" id="show-contrib">Contributions</button>
+            <button class="btn" id="show-settings">Settings</button>
+          </div>
+        </header>
+        <div class="columns" id="columns"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Task panel -->
+  <dialog id="task-panel" class="drawer">
+    <div class="drawer-top">
+      <span class="chip" id="t-where"></span>
+      <span class="saved" id="t-saved" aria-live="polite"></span>
+      <button class="btn" id="t-close">Close</button>
+    </div>
+    <div class="drawer-body">
+      <div class="title-row">
+        <input type="checkbox" class="tick big" id="t-done" aria-label="Mark as done">
+        <textarea id="t-title" class="t-title" rows="1" maxlength="140" aria-label="Task"></textarea>
+        <button class="star" id="t-important" aria-pressed="false" title="Important">★</button>
+      </div>
+
+      <div class="fields">
+        <div class="field">
+          <span class="label">Status</span>
+          <div class="seg small" id="t-status" role="group" aria-label="Status">
+            <button data-status="todo">To do</button>
+            <button data-status="doing">Doing</button>
+            <button data-status="done">Done</button>
+          </div>
+        </div>
+        <label class="field">Due<input id="t-due" type="date"><small id="t-week"></small></label>
+        <label class="field" id="t-assignee-field">Assigned to<select id="t-assignee"></select></label>
+      </div>
+
+      <section>
+        <h4>Notes</h4>
+        <textarea id="t-notes" rows="3" maxlength="8000" placeholder="Lecturer’s instructions, links, anything useful"></textarea>
+      </section>
+      <section>
+        <h4>Steps <span class="muted" id="t-step-count"></span></h4>
+        <ul class="steps" id="t-steps"></ul>
+        <form class="inline-form" id="t-step-form">
+          <input id="t-step-input" placeholder="Break it down: add a step" aria-label="New step" maxlength="200">
+          <button class="btn" type="submit">Add</button>
+        </form>
+      </section>
+      <section>
+        <h4>Files</h4>
+        <ul class="files" id="t-files"></ul>
+        <label class="upload" id="t-upload">
+          <input type="file" id="t-file-input" multiple>
+          <span>Attach files</span>
+          <small>PDF, Word, slides, Excel, images or ZIP, up to 10 MB</small>
+        </label>
+        <p class="error" id="t-file-error" role="alert"></p>
+      </section>
+      <section id="t-comments-section">
+        <h4>Discussion</h4>
+        <ul class="comments" id="t-comments"></ul>
+        <form id="t-comment-form" class="comment-form">
+          <textarea id="t-comment-input" rows="2" placeholder="Write to your group or supervisor" aria-label="New comment" maxlength="4000"></textarea>
+          <button class="btn primary" type="submit">Send</button>
+        </form>
+      </section>
+      <p class="error" id="t-error" role="alert"></p>
+      <div class="drawer-foot">
+        <span class="muted" id="t-meta"></span>
+        <button class="link danger" id="t-delete">Delete task</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Project setup -->
+  <dialog id="project-dialog">
+    <form id="project-form" class="stack">
+      <h3 id="pf-title">New project</h3>
+      <label id="pf-name-field">Project name<input id="pf-name" maxlength="80" placeholder="Database group assignment"></label>
+      <label id="pf-course-field">Course code <small>(optional)</small><input id="pf-course" maxlength="20" placeholder="CSC584"></label>
+      <label>Week 1 starts on <small>(optional)</small><input id="pf-start" type="date"><small>Lets TaskForge show the semester week, like “Week 7”.</small></label>
+      <label id="pf-template-field">Start with
+        <select id="pf-template">
+          <option value="blank">Nothing, I’ll add tasks myself</option>
+          <option value="group">Group assignment steps</option>
+          <option value="fyp">Final Year Project (FYP) milestones</option>
+        </select>
+      </label>
+      <p class="error" id="pf-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="link danger" type="button" id="pf-delete" hidden>Delete project</button>
+        <span class="spacer"></span>
+        <button class="btn" type="button" id="pf-cancel">Cancel</button>
+        <button class="btn primary" type="submit" id="pf-submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Team and contributions -->
+  <dialog id="panel-dialog" class="panel">
+    <div class="panel-head">
+      <h3 id="panel-title"></h3>
+      <button class="btn" id="panel-close">Close</button>
+    </div>
+    <div id="panel-body"></div>
+  </dialog>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

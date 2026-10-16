@@ -1,0 +1,136 @@
+import { DatabaseSync } from 'node:sqlite';
+
+const SCHEMA_VERSION = 3;
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id            INTEGER PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+
+-- A board is either someone's personal list (personal = 1, one per user)
+-- or a team project such as a group assignment or a Final Year Project.
+CREATE TABLE IF NOT EXISTS boards (
+  id           INTEGER PRIMARY KEY,
+  name         TEXT NOT NULL,
+  personal     INTEGER NOT NULL DEFAULT 0,
+  course_code  TEXT NOT NULL DEFAULT '',  -- e.g. CSC584
+  sem_start    TEXT,                      -- Monday of Week 1, YYYY-MM-DD
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- owner = group leader, member = teammate, supervisor = lecturer or FYP supervisor.
+CREATE TABLE IF NOT EXISTS memberships (
+  board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role     TEXT NOT NULL CHECK (role IN ('owner', 'member', 'supervisor')),
+  PRIMARY KEY (board_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id           INTEGER PRIMARY KEY,
+  board_id     INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  title        TEXT NOT NULL,
+  notes        TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'doing', 'done')),
+  important    INTEGER NOT NULL DEFAULT 0,
+  position     REAL NOT NULL,
+  assignee_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  due_date     TEXT,
+  completed_at TEXT,
+  created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id, status, position);
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee_due ON tasks(assignee_id, due_date);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id         INTEGER PRIMARY KEY,
+  task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  body       TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_task ON comments(task_id, id);
+
+CREATE TABLE IF NOT EXISTS steps (
+  id       INTEGER PRIMARY KEY,
+  task_id  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  text     TEXT NOT NULL,
+  done     INTEGER NOT NULL DEFAULT 0,
+  position INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_steps_task ON steps(task_id, position);
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id          INTEGER PRIMARY KEY,
+  task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  filename    TEXT NOT NULL,
+  mime        TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  stored_name TEXT NOT NULL UNIQUE,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
+
+CREATE TABLE IF NOT EXISTS activity (
+  id         INTEGER PRIMARY KEY,
+  board_id   INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action     TEXT NOT NULL,
+  detail     TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_activity_board ON activity(board_id, id);
+`;
+
+export function openDb(file = process.env.DB_FILE || 'taskforge.db') {
+  const db = new DatabaseSync(file);
+  db.exec('PRAGMA foreign_keys = ON;');
+  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
+
+  const { user_version: version } = db.prepare('PRAGMA user_version').get();
+  const hasTables = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks'`).get();
+  if (hasTables && version < SCHEMA_VERSION) {
+    throw new Error(`${file} was made by an older TaskForge. Delete it, then run "npm run seed" to start fresh.`);
+  }
+  db.exec(SCHEMA);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  return db;
+}
+
+// Runs fn inside a transaction and rolls back if it throws.
+export function transaction(db, fn) {
+  db.exec('BEGIN');
+  try {
+    const result = fn();
+    db.exec('COMMIT');
+    return result;
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+export function logActivity(db, boardId, userId, action, detail) {
+  db.prepare('INSERT INTO activity (board_id, user_id, action, detail) VALUES (?, ?, ?, ?)')
+    .run(boardId, userId, action, detail);
+}
+
+// Every account gets one personal board for its own tasks.
+export function createPersonalBoard(db, userId) {
+  const { lastInsertRowid: id } = db.prepare(`INSERT INTO boards (name, personal) VALUES ('Personal', 1)`).run();
+  db.prepare(`INSERT INTO memberships (board_id, user_id, role) VALUES (?, ?, 'owner')`).run(id, userId);
+  return id;
+}
