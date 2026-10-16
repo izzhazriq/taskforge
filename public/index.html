@@ -26,7 +26,7 @@
         <p class="error" id="auth-error" role="alert"></p>
         <button class="btn primary" id="auth-submit" type="submit">Log in</button>
       </form>
-      <p class="hint">Ran <code>npm run seed</code>? Log in as <code>demo@taskforge.dev</code> / <code>demo1234</code>.</p>
+      <p class="hint" id="demo-hint" hidden>This is the demo. Log in as <code>demo@taskforge.dev</code> / <code>demo1234</code>.</p>
     </div>
   </main>
 
@@ -34,6 +34,9 @@
   <div id="app-view" class="app" hidden>
     <aside class="sidebar">
       <div class="logo small">Task<span>Forge</span></div>
+      <form id="search-form" class="search" role="search">
+        <input id="search-input" type="search" placeholder="Search tasks" aria-label="Search tasks" maxlength="100" autocomplete="off">
+      </form>
       <nav class="nav">
         <button id="nav-mywork" class="nav-item"><span>My work</span><span class="badge" id="mywork-badge" hidden></span></button>
         <button id="nav-personal" class="nav-item"><span>Personal</span></button>
@@ -42,7 +45,7 @@
         <button class="nav-item add" id="new-project">+ New project</button>
       </nav>
       <div class="me">
-        <span id="me-name"></span>
+        <button class="link me-link" id="me-name" title="Account settings"></button>
         <button class="link" id="logout">Log out</button>
       </div>
     </aside>
@@ -63,6 +66,17 @@
           <button class="btn primary" type="submit">Add</button>
         </form>
         <div id="mywork-groups" class="groups"></div>
+      </section>
+
+      <!-- Search results -->
+      <section id="search-view" hidden>
+        <header class="page-head">
+          <div>
+            <div class="sub" id="search-sub"></div>
+            <h2>Search</h2>
+          </div>
+        </header>
+        <ul class="rows" id="search-results"></ul>
       </section>
 
       <!-- A project, or the personal list -->
@@ -172,6 +186,29 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Account -->
+  <dialog id="account-dialog">
+    <div class="stack">
+      <h3>Your account</h3>
+      <form id="name-form" class="stack">
+        <label>Name<input id="acc-name" maxlength="80" required autocomplete="name"></label>
+        <p class="muted small-note" id="acc-email"></p>
+        <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="submit">Save name</button></div>
+      </form>
+      <form id="password-form" class="stack">
+        <h4>Change password</h4>
+        <label>Current password<input id="acc-current" type="password" autocomplete="current-password" required></label>
+        <label>New password<input id="acc-new" type="password" autocomplete="new-password" minlength="8" required><small>At least 8 characters. Other browsers will be signed out.</small></label>
+        <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="submit">Change password</button></div>
+      </form>
+      <p class="error" id="acc-error" role="alert"></p>
+      <p class="saved" id="acc-saved" aria-live="polite"></p>
+      <div class="dialog-actions"><span class="spacer"></span><button class="btn" type="button" id="acc-close">Close</button></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
 
   <!-- Team and contributions -->
   <dialog id="panel-dialog" class="panel">

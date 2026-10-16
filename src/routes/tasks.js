@@ -49,6 +49,22 @@ export function taskRoutes(db, { uploadDir: dir }) {
     res.json({ tasks });
   });
 
+  // ----- Search: tasks in any project I'm in, matching the title or notes -----
+  r.get('/search', (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+    if (!q) return res.json({ tasks: [] });
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const tasks = db.prepare(`
+      SELECT ${TASK_LIST_COLUMNS}, b.name AS board_name, b.personal, b.course_code
+      FROM tasks t
+      JOIN boards b ON b.id = t.board_id
+      JOIN memberships m ON m.board_id = t.board_id AND m.user_id = ?
+      WHERE (t.title LIKE ? ESCAPE '\\' OR t.notes LIKE ? ESCAPE '\\')
+      ORDER BY t.status = 'done', t.due_date IS NULL, t.due_date, t.updated_at DESC
+      LIMIT 50`).all(req.user.id, like, like);
+    res.json({ tasks });
+  });
+
   // ----- Tasks -----
 
   r.post('/boards/:boardId/tasks', (req, res) => {

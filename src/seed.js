@@ -1,10 +1,17 @@
 // Creates demo accounts, a personal list and two team projects so the app has something to show.
-// Run with: npm run seed
+// Run with: npm run demo (it only ever touches the demo-data folder, never your real tasks).
+import fs from 'node:fs';
 import { openDb, transaction, createPersonalBoard } from './db.js';
+import { DEMO, DATA_DIR } from './config.js';
 import { hashPassword } from './auth.js';
 import { TEMPLATES, dueForWeek } from './templates.js';
 import { createTask } from './taskUtils.js';
 
+if (!DEMO) {
+  console.error('The demo data only goes in the demo folder. Run "npm run demo" instead.');
+  process.exit(1);
+}
+fs.rmSync(DATA_DIR, { recursive: true, force: true });
 const db = openDb();
 
 // Put the demo semester in Week 7, so some work is done, some due soon and some late.
@@ -71,5 +78,6 @@ transaction(db, () => {
   comment.run(grp[2], id.aina, 'Sure, I will check once it is up.');
 });
 
+db.close();
 console.log(`Seeded demo data (Week 1 started ${semStart}, so this is Week 7).`);
 console.log('Log in as demo@taskforge.dev, aina@taskforge.dev or dr.nurul@taskforge.dev (supervisor). Password: demo1234');

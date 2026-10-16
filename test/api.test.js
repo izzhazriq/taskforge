@@ -157,3 +157,37 @@ test('a project keeps at least one group leader', async () => {
   assert.equal((await leader(`/boards/${projectId}/members/${ids['leader@x.dev']}`, { method: 'PATCH', body: { role: 'member' } })).status, 400);
   assert.equal((await leader(`/boards/${projectId}/members/${ids['leader@x.dev']}`, { method: 'DELETE' })).status, 400);
 });
+
+test('search finds tasks in my projects only, by name or notes', async () => {
+  await member(`/tasks/${task.id}`, { method: 'PATCH', body: { notes: 'Use APA 7th edition referencing' } });
+  const byNotes = await member('/search?q=apa 7th');
+  assert.deepEqual(byNotes.data.tasks.map((t) => t.id), [task.id]);
+  assert.ok((await member('/search?q=WRITE MY PART')).data.tasks.some((t) => t.id === task.id), 'search ignores case');
+  assert.equal((await stranger('/search?q=Write my part')).data.tasks.length, 0, 'other people’s projects stay hidden');
+  assert.equal((await leader('/search?q=hostel')).data.tasks[0].title, 'Pay hostel fees');
+  assert.equal((await member('/search?q=hostel')).data.tasks.length, 0, 'personal lists stay private');
+  assert.equal((await member('/search?q=%25')).data.tasks.length, 0, '% is searched for literally');
+  assert.equal((await member('/search?q=')).data.tasks.length, 0);
+});
+
+test('people can rename themselves and change their password', async () => {
+  const renamed = await member('/auth/me', { method: 'PATCH', body: { name: 'Musa Ali' } });
+  assert.equal(renamed.data.user.name, 'Musa Ali');
+  assert.equal((await member('/auth/me', { method: 'PATCH', body: { name: '  ' } })).status, 400);
+
+  const otherBrowser = client();
+  await otherBrowser('/auth/login', { method: 'POST', body: { email: 'member@x.dev', password: 'password123' } });
+  assert.equal((await otherBrowser('/auth/me')).status, 200);
+
+  const wrong = await member('/auth/password', { method: 'POST', body: { currentPassword: 'nope', newPassword: 'new-password-1' } });
+  assert.equal(wrong.status, 400);
+  const short = await member('/auth/password', { method: 'POST', body: { currentPassword: 'password123', newPassword: 'short' } });
+  assert.equal(short.status, 400);
+  const ok = await member('/auth/password', { method: 'POST', body: { currentPassword: 'password123', newPassword: 'new-password-1' } });
+  assert.equal(ok.status, 204);
+
+  assert.equal((await member('/auth/me')).status, 200, 'this browser stays signed in');
+  assert.equal((await otherBrowser('/auth/me')).status, 401, 'other browsers are signed out');
+  const relogin = await client()('/auth/login', { method: 'POST', body: { email: 'member@x.dev', password: 'new-password-1' } });
+  assert.equal(relogin.status, 200);
+});

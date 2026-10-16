@@ -48,17 +48,26 @@ Students juggle personal deadlines, several group projects and an FYP at the sam
 | Files | Stored on disk under random names, with details in SQLite |
 | Auth | `scrypt` password hashing, random session tokens stored as SHA-256 hashes, HttpOnly cookies |
 | Front end | Plain JavaScript, HTML and CSS, no build step |
-| Tests | `node:test` integration tests against a real server and an in-memory database |
+| Tests | `node:test` integration tests against a real server and an in-memory database, run on GitHub Actions |
 
-## Run it locally
+## Run it on your laptop
+
+You need [Node.js](https://nodejs.org) 22.5 or newer.
 
 ```bash
 npm install
-npm run seed     # optional: demo accounts, a personal list and two projects
-npm start        # open http://localhost:3000
+npm start        # open http://localhost:3000 and sign up
 ```
 
-Every demo account uses the password `demo1234`:
+Leave the terminal open while you use it, and press `Ctrl+C` to stop. Your tasks and files are saved in the `data` folder, so they're still there next time you run `npm start`.
+
+### Try the demo first
+
+```bash
+npm run demo     # open http://localhost:3001
+```
+
+The demo has its own `demo-data` folder and resets every time you run it, so it never touches your real tasks. Every demo account uses the password `demo1234`:
 
 | Email | Who |
 |---|---|
@@ -66,24 +75,51 @@ Every demo account uses the password `demo1234`:
 | `aina@taskforge.dev` | A groupmate on CSC584 |
 | `dr.nurul@taskforge.dev` | The FYP supervisor |
 
-The demo semester is set so that today is in Week 7. Run the tests with `npm test`.
+### Backups
 
-> Ran an older version? The database layout changed. Delete `taskforge.db` and run `npm run seed` again.
+While it runs, TaskForge saves a copy of its database once a day in `data/backups` and keeps the last 14. Run `npm run backup` to make one now. Attached files are in `data/uploads`. To back up everything, copy the whole `data` folder somewhere safe, such as Google Drive.
+
+To restore a backup, stop TaskForge, replace `data/taskforge.db` with the backup file, and start it again.
+
+### Updating
+
+```bash
+git pull
+npm install
+npm start
+```
+
+Your data is kept. If an update changes how the data is stored, TaskForge upgrades it on the next start and first saves a copy of the old version beside it, for example `data/taskforge.db.v3.bak`.
+
+### Shortcuts
+
+| Key | Does |
+|---|---|
+| `/` | Search all your tasks, by name or notes |
+| `n` | Add a task |
+| `Esc` | Clear the search |
+
+Click your name at the bottom of the sidebar to change your name or password.
+
+### Settings
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `PORT` | `3000` | HTTP port |
-| `DB_FILE` | `taskforge.db` | SQLite file path |
-| `UPLOAD_DIR` | `uploads` | Where attached files are stored |
+| `PORT` | `3000` (`3001` for the demo) | HTTP port |
+| `DATA_DIR` | `data` | Where the database, files and backups are kept |
+| `HOST` | `127.0.0.1` | Only your own computer can open it. Set to `0.0.0.0` to open it from your phone on the same Wi-Fi |
 | `TZ_OFFSET_HOURS` | `8` | Hours from UTC used for "today" (Malaysia is 8) |
-| `NODE_ENV` | | Set to `production` to mark cookies `Secure` (HTTPS only) |
+
+Run the tests with `npm test`.
 
 ## Project structure
 
 ```
 src/
-  server.js        Express app, routing and the JSON error handler
-  db.js            Schema, transactions, personal lists
+  server.js        Express app, routing, error handler, daily backups
+  config.js        Where data is kept, demo mode
+  db.js            Schema, upgrades, backups, transactions, personal lists
+  backup.js        npm run backup
   auth.js          Password hashing, sessions, roles
   validate.js      Input validation helpers
   taskUtils.js     Creating tasks, Malaysian "today"
@@ -115,7 +151,9 @@ users ──< memberships >── boards ──< tasks ──< steps
 | Method | Path | Who | What |
 |---|---|---|---|
 | POST | `/api/auth/register`, `/login`, `/logout` | anyone | Accounts and sessions |
-| GET | `/api/auth/me` | signed in | Current user |
+| GET / PATCH | `/api/auth/me` | signed in | Current user, change name |
+| POST | `/api/auth/password` | signed in | Change password (signs out other browsers) |
+| GET | `/api/search?q=` | signed in | Tasks in my personal list and projects matching a name or notes |
 | GET | `/api/me/tasks` | signed in | My work: my open tasks everywhere, plus ones finished in the last day |
 | GET | `/api/boards` | signed in | My personal list and projects |
 | POST | `/api/boards` | signed in | Create a project, optionally from a template |

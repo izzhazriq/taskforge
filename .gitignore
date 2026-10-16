@@ -1,6 +1,9 @@
 node_modules/
+data/
+demo-data/
 *.db
 *.db-shm
 *.db-wal
+*.bak
 .env
 uploads/
