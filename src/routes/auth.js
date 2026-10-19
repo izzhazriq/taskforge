@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import crypto from 'node:crypto';
-import { HttpError, hashPassword, verifyPassword, createSession, destroySession, requireUser, userSql, readCookie } from '../auth.js';
+import { HttpError } from '../errors.js';
+import { hashPassword, verifyPassword, createSession, destroySession, requireUser, userSql, readCookie } from '../auth.js';
 import * as v from '../validate.js';
 import { transaction, createPersonalBoard } from '../db.js';
 import { DEMO } from '../config.js';

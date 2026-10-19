@@ -2,7 +2,8 @@ import { Router, raw } from 'express';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HttpError, avatarSql } from '../auth.js';
+import { HttpError } from '../errors.js';
+import { avatarSql } from '../auth.js';
 import { MAX_AVATAR_BYTES, imageType, removeFile } from '../files.js';
 import * as v from '../validate.js';
 

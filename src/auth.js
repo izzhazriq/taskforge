@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { HttpError } from './errors.js';
 
 export const SESSION_COOKIE = 'tf_session';
 const SESSION_DAYS = 30;
@@ -9,13 +10,6 @@ export const ROLE_LABEL = { owner: 'group leader', member: 'team member', superv
 // so browsers don't keep showing an old one from their cache.
 export const avatarSql = (alias) =>
   `CASE WHEN ${alias}.avatar IS NULL THEN NULL ELSE '/api/users/' || ${alias}.id || '/avatar?v=' || substr(${alias}.avatar, 8, 8) END`;
-
-export class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import path from 'node:path';
-import { HttpError, assertRole, avatarSql } from '../auth.js';
+import { HttpError } from '../errors.js';
+import { assertRole, avatarSql } from '../auth.js';
 import { transaction, logActivity, suggestKey } from '../db.js';
 import { TEMPLATES, dueForWeek } from '../templates.js';
 import { createTask, TODAY_SQL, localDateSql } from '../taskUtils.js';

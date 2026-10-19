@@ -1,7 +1,8 @@
 import { Router, raw } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HttpError, assertRole, avatarSql } from '../auth.js';
+import { HttpError } from '../errors.js';
+import { assertRole, avatarSql } from '../auth.js';
 import { transaction, logActivity } from '../db.js';
 import { createTask, STATUS_LABEL, POSITION_GAP } from '../taskUtils.js';
 import { MAX_UPLOAD_BYTES, saveUpload, removeFile, sendDownload, sendInline, previewType } from '../files.js';
