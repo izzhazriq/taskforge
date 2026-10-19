@@ -1,6 +1,6 @@
 // Reads a project's GitHub repository: recent commits, open pull requests and open issues.
 // Public repositories work without a token; private ones need a personal access token from the profile page.
-import { HttpError } from './auth.js';
+import { HttpError } from './errors.js';
 
 // Accepts "owner/name" or a github.com link, and returns "owner/name".
 export function parseRepo(input) {

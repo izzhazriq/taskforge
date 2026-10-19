@@ -1,4 +1,4 @@
-import { HttpError } from './auth.js';
+import { HttpError } from './errors.js';
 
 export const STATUSES = ['todo', 'doing', 'done'];
 export const ROLES = ['owner', 'member', 'supervisor'];

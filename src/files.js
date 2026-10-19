@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HttpError } from './auth.js';
+import { HttpError } from './errors.js';
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
